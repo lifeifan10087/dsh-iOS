@@ -1,0 +1,23 @@
+# Cirrus CI：开源仓库免费 macOS（Apple Silicon），不需要绑卡
+# 用 GitHub 登录 cirrus-ci.org → Add repository → 勾 dsh-ios 即可
+task:
+  name: build-node-ios
+  macos_instance:
+    image: ghcr.io/cirruslabs/macos-runner:sonoma
+  timeout_in: 150m
+
+  env:
+    NODE_VER: v24.9.0
+    MIN_IOS: "14.0"
+    HOMEBREW_NO_AUTO_UPDATE: "1"
+
+  build_script:
+    - bash build/preflight.sh
+    - NODE_VER=$NODE_VER MIN_IOS=$MIN_IOS bash build/build-node-ios.sh
+    - (brew install ldid || true)
+    - bash build/patch-macho-ios.sh out/node-ios-arm64 out/node-ios-patched || cp out/node-ios-arm64 out/node-ios-patched
+    - DSH_VER=0.2.2-rc.1 bash deploy/bundle-node-modules.sh
+
+  artifacts:
+    path: "out/node-ios-patched"
+    path: "out/node_modules.tgz"
