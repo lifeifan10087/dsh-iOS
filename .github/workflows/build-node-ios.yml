@@ -1,0 +1,67 @@
+name: build-node-ios
+
+on:
+  workflow_dispatch:
+    inputs:
+      node_version:
+        description: Node tag to build
+        default: v24.9.0
+        required: true
+      min_ios:
+        description: Minimum iOS version
+        default: "14.0"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Preflight
+        run: bash build/preflight.sh
+
+      - name: Build Node for iOS arm64
+        env:
+          NODE_VER: ${{ inputs.node_version }}
+          MIN_IOS: ${{ inputs.min_ios }}
+          WORK: ${{ github.workspace }}/work
+          OUT: ${{ github.workspace }}/out
+        run: bash build/build-node-ios.sh
+
+      - name: Install signing tools
+        run: brew install ldid || true
+
+      - name: Patch Mach-O to iOS + sign
+        run: |
+          bash build/patch-macho-ios.sh out/node-ios-arm64 out/node-ios-patched || \
+            cp out/node-ios-arm64 out/node-ios-patched
+
+      - name: Bundle node_modules (darwin-arm64, patched to iOS)
+        env:
+          DSH_VER: "0.2.2-rc.1"
+          OUT: ${{ github.workspace }}/out
+        run: bash deploy/bundle-node-modules.sh
+
+      - name: Show results
+        run: |
+          ls -lh out/ || true
+          file out/node-ios-patched || true
+          vtool -show-build out/node-ios-patched | head -12 || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dsh-ios-kit-${{ inputs.node_version }}
+          path: |
+            out/node-ios-patched
+            out/node_modules.tgz
+          if-no-files-found: error
+          retention-days: 14

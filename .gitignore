@@ -1,0 +1,5 @@
+out/
+work/
+node_modules/
+*.tar.gz
+.DS_Store
