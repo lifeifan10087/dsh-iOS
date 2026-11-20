@@ -1,0 +1,44 @@
+name: build-node-ios-linux
+
+on:
+  workflow_dispatch:
+    inputs:
+      node_version:
+        description: Node tag
+        default: v24.9.0
+      min_ios:
+        description: Minimum iOS
+        default: "14.0"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang lld ninja-build python3 make git curl xz-utils
+          git clone --depth 1 https://github.com/theos/sdks.git /tmp/sdks
+          ls /tmp/sdks | head -20
+
+      - name: Cross-build Node for iOS
+        env:
+          NODE_VER: ${{ inputs.node_version }}
+          MIN_IOS: ${{ inputs.min_ios }}
+        run: bash build/build-node-ios-linux.sh
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: node-ios-linux-${{ inputs.node_version }}
+          path: |
+            work/out/node-ios-arm64
+            work/build.log
+          if-no-files-found: warn
+          retention-days: 7
