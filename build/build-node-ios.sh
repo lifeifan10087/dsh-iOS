@@ -77,9 +77,13 @@ if ! CC=clang CXX=clang++ ./configure --dest-os=mac --dest-cpu=arm64 \
 fi
 export CFLAGS="-DHAVE_UNISTD_H=1 -DNGHTTP3_HAVE_UNISTD_H=1 -DNGTCP2_HAVE_UNISTD_H=1"
 set +e
+# 只编这几个文件目标（之前用裸名字 make 找不到规则，才退化成全量 55 分钟）
 make -j"$JOBS" V=0 \
-  out/Release/node_js2c out/Release/bytecode_builtins_list_generator \
-  out/Release/torque out/Release/gen-regexp-special-case \
+  out/Release/node_js2c \
+  out/Release/bytecode_builtins_list_generator \
+  out/Release/torque \
+  out/Release/gen-regexp-special-case \
+  out/Release/obj/gen/node_javascript.cc \
   >"$WORK/phaseA.log" 2>&1
 rcA=$?
 if [ $rcA -ne 0 ]; then
