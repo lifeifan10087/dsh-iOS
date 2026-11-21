@@ -143,6 +143,14 @@ for t in $HOSTTOOLS; do
 done
 MACSDK="$(xcrun --sdk macosx --show-sdk-path)"
 python3 "$HERE/patch-host-mk.py" out "$MACSDK" $HOSTTOOLS || true
+# 阶段A已经给了这些工具的可执行文件，这里直接把它们的 makefile 清空，
+# 彻底阻止 make 在阶段B重编（重编会把 simdutf 等依赖编成 iOS 版，链接必炸）
+for t in $HOSTTOOLS; do
+  for suffix in target host; do
+    f="out/$t.$suffix.mk"
+    [ -f "$f" ] && : > "$f" && echo "   清空 $f"
+  done
+done
 python3 "$HERE/skip-generated.py" out || true
 
 if [ "${PROBE:-0}" = "2" ]; then
