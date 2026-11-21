@@ -165,7 +165,7 @@ if [ "${PROBE:-0}" = "2" ]; then
 fi
 
 # 清掉可能残留的目标/宿主对象，避免混进上次运行编坏的符号
-rm -rf out/Release/obj.host out/Release/obj.target out/Release/node_js2c 2>/dev/null || true
+rm -rf out/Release/obj.host out/Release/obj.target 2>/dev/null || true
 
 echo "== 阶段B 编译（约 30-60 分钟）"
 set +e
