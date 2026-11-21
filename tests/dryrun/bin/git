@@ -1,0 +1,3 @@
+#!/bin/sh
+# 假装 clone/fetch/checkout 都成功
+exit 0

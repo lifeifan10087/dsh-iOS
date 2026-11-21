@@ -1,0 +1,11 @@
+#!/bin/sh
+# 假装编译成功：造出脚本后面要检查的文件
+mkdir -p out/Release/obj/gen
+: > out/Release/node_js2c
+: > out/Release/bytecode_builtins_list_generator
+: > out/Release/torque
+: > out/Release/gen-regexp-special-case
+echo "cc" > out/node_js2c.host.mk
+echo "int main(){}" > out/Release/node
+echo "fake" > out/Release/obj/gen/node_javascript.cc
+exit 0

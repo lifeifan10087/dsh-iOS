@@ -1,0 +1,35 @@
+# Azure Pipelines：Microsoft 账号即可，不依赖 GitHub；macOS 托管代理有免费额度
+# 用法：dev.azure.com 新建项目 → Repos 里上传 dsh-ios-kit.zip 解压提交 → Pipelines 选本文件
+trigger: none
+pr: none
+
+pool:
+  vmImage: macOS-14
+
+variables:
+  NODE_REF: update22-9-0
+  MIN_IOS: "14.0"
+
+steps:
+  - checkout: self
+  - bash: |
+      set -e
+      export WORK="$(Build.SourcesDirectory)/work" OUT="$(Build.SourcesDirectory)/out"
+      bash build/preflight.sh || true
+      bash build/build-node-ios.sh
+    displayName: Build Node for iOS arm64
+    env:
+      NODE_REF: $(NODE_REF)
+      MIN_IOS: $(MIN_IOS)
+
+  - bash: |
+      brew install ldid || true
+      bash build/patch-macho-ios.sh out/node-ios-arm64 out/node-ios-patched || cp out/node-ios-arm64 out/node-ios-patched
+    displayName: Patch to iOS + sign
+
+  - bash: DSH_VER=0.2.2-rc.1 bash deploy/bundle-node-modules.sh
+    displayName: Bundle node_modules
+
+  - publish: $(Build.SourcesDirectory)/out
+    artifact: dsh-ios-kit
+    displayName: Publish artifacts

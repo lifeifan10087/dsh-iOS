@@ -42,7 +42,7 @@ mkdir -p "$(dirname "$LAUNCHER")"
 cat > "$LAUNCHER" <<EOF
 #!/bin/sh
 export DSH_HOME="$HOME_DIR"
-exec "$NODE_BIN" --expose-internals --max-old-space-size=2048 \\
+exec "$NODE_BIN" --expose-internals --max-old-space-size=2048 --experimental-sqlite \\
   "$APP/node_modules/@deepseek-ai/dsh/lib/bin.js" "\$@"
 EOF
 chmod +x "$LAUNCHER"

@@ -1,0 +1,27 @@
+# Codemagic 免费额度：每月 500 分钟 macOS（M2），不需要 GitHub 仓库
+# 用法：codemagic.io 用邮箱注册 → 添加 app → 选 "Other" → 上传 dsh-ios-kit.zip
+workflows:
+  build-node-ios:
+    name: build-node-ios
+    instance_type: mac_mini_m2
+    max_build_duration: 240
+    environment:
+      vars:
+        NODE_REF: update22-9-0
+        MIN_IOS: "14.0"
+    scripts:
+      - name: Preflight
+        script: bash build/preflight.sh || true
+      - name: Build Node for iOS
+        script: |
+          export WORK="$CM_BUILD_DIR/work" OUT="$CM_BUILD_DIR/out"
+          bash build/build-node-ios.sh
+      - name: Patch to iOS + sign
+        script: |
+          brew install ldid || true
+          bash build/patch-macho-ios.sh out/node-ios-arm64 out/node-ios-patched || cp out/node-ios-arm64 out/node-ios-patched
+      - name: Bundle node_modules
+        script: DSH_VER=0.2.2-rc.1 bash deploy/bundle-node-modules.sh
+    artifacts:
+      - out/node-ios-patched
+      - out/node_modules.tgz

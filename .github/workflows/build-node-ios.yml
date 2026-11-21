@@ -3,22 +3,26 @@ name: build-node-ios
 on:
   workflow_dispatch:
     inputs:
-      node_version:
-        description: Node tag to build
-        default: v24.9.0
+      node_ref:
+        description: Node source ref (nodejs-mobile iOS-patched branch by default)
+        default: update22-9-0
         required: true
       min_ios:
         description: Minimum iOS version
         default: "14.0"
         required: true
+      probe:
+        description: Only run toolchain diagnostics
+        default: "0"
+        required: false
 
 permissions:
   contents: read
 
 jobs:
   build:
-    runs-on: macos-14
-    timeout-minutes: 150
+    runs-on: macos-15
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@v4
 
@@ -26,13 +30,23 @@ jobs:
         with:
           node-version: "24"
 
+      - name: Cache Node source + host tools
+        uses: actions/cache@v4
+        with:
+          path: |
+            work/node
+            work/host
+          key: node-ios-${{ inputs.node_ref }}-hosttools-v2
+
       - name: Preflight
         run: bash build/preflight.sh
 
       - name: Build Node for iOS arm64
         env:
-          NODE_VER: ${{ inputs.node_version }}
+          NODE_REF: ${{ inputs.node_ref }}
+          NODE_VER: ${{ inputs.node_ref }}
           MIN_IOS: ${{ inputs.min_ios }}
+          PROBE: ${{ inputs.probe }}
           WORK: ${{ github.workspace }}/work
           OUT: ${{ github.workspace }}/out
         run: bash build/build-node-ios.sh
@@ -59,7 +73,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: dsh-ios-kit-${{ inputs.node_version }}
+          name: dsh-ios-kit-${{ inputs.node_ref }}
           path: |
             out/node-ios-patched
             out/node_modules.tgz

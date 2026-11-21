@@ -21,8 +21,8 @@ found=0
 while IFS= read -r bin; do
   found=$((found+1))
   case "$(file -b "$bin")" in
-    *Mach-O*) bash "$HERE/build/patch-macho-ios.sh" "$bin" "$bin.ios" && mv -f "$bin.ios" "$bin" || echo "  跳过 $bin（vtool 失败）";;
-    *) echo "  跳过 $bin（非 Mach-O）";;
+    *Mach-O*) bash "$HERE/build/patch-macho-ios.sh" "$bin" "$bin.ios" && mv -f "$bin.ios" "$bin" || echo "  跳过 ${bin}（vtool 失败）";;
+    *) echo "  跳过 ${bin}（非 Mach-O）";;
   esac
 done < <(find "$BUILD/node_modules" -type f \( -name "*.node" -o -name "rg" -o -name "landlock-run" \) 2>/dev/null)
 echo "处理了 $found 个二进制"

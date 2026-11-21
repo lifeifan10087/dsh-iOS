@@ -1,0 +1,8 @@
+#!/bin/sh
+SDK="/tmp/fake-sdk"
+case "$*" in
+  *--show-sdk-path*) echo "$SDK" ;;
+  *--show-sdk-version*) echo "18.5" ;;
+  *-f*) shift 2; echo "/usr/bin/$1" ;;
+  *) echo "$SDK" ;;
+esac

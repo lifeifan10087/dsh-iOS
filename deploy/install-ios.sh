@@ -35,7 +35,7 @@ echo "== 2) 推移植包 + 依赖包"
 tar -C "$KIT" -czf /tmp/ios-port.tgz --exclude .git --exclude out .
 scpx /tmp/ios-port.tgz "$DEVICE:/tmp/"
 MATS="$KIT/out/node_modules.tgz"
-if [ -f "$MATS" ]; then scpx "$MATS" "$DEVICE:/tmp/node_modules.tgz"; else echo "  （没找到 $MATS，设备上需要有 npm 才能自己装）"; fi
+if [ -f "$MATS" ]; then scpx "$MATS" "$DEVICE:/tmp/node_modules.tgz"; else echo "  （没找到 ${MATS}，设备上需要有 npm 才能自己装）"; fi
 sshx "$DEVICE" "mkdir -p /tmp/ios-port && tar -C /tmp/ios-port -xzf /tmp/ios-port.tgz"
 
 echo "== 3) 设备内初始化（装引擎+替身+launchd）"

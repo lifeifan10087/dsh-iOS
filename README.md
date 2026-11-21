@@ -119,3 +119,35 @@ DEVICE=root@192.168.1.20 bash deploy/install-ios.sh out/node-ios-arm64
 - JIT：iOS 必须先拿 JIT entitlement（`ldid -S` 带 `allow-jit` + 关掉 CDHash 校验），否则只能 `--jitless`，慢且 WASM 不可用。
 - 后台常驻依赖 launchd，iOS 会回收非 daemon 进程；不走 daemon 会掉线。
 - iCloud/系统更新后越狱环境可能失效，需保留可重装脚本。
+
+## 七、两阶段交叉编译（当前实现）
+
+Node 的构建过程要跑若干"构建期工具"（`node_js2c`、`torque`、
+`bytecode_builtins_list_generator`）。交叉编译时它们会被编成 iOS 二进制，
+在 macOS 构建机上执行会直接 `Killed: 9`。所以 `build-node-ios.sh` 分两段：
+
+| 阶段 | 目标 | 产出 | 耗时 |
+|---|---|---|---|
+| A | macOS | 上述工具 + `out/Release/obj/gen`（平台无关） | ~45 分钟 |
+| B | iOS arm64 | 真正的 `node` 可执行 | ~40–60 分钟 |
+
+阶段 B 做的三件事：
+
+1. `tar` 回放阶段 A 的 `obj/gen`（生成文件直接复用）
+2. 把阶段 A 的工具二进制拷进 `out/Release/`
+3. `skip-generated.py` 按 gyp 的 `*.intermediate` 戳补戳，让 make 别再跑这些
+   action；`neutralize-host-tools.py` 把对应 makefile 里的编译器换成 `true`，
+   防止它们被重编成 iOS 版本覆盖掉
+
+来源：`nodejs-mobile/nodejs-mobile` 的 `update22-9-0` 分支（Node 22 + iOS 补丁），
+`--dest-os=ios` 是它特有的；本机实测 dsh 在 Node 22 上能正常起服务。
+
+## 八、Node 版本下限（实测）
+
+- Node 18：❌ `node:util` 没有 `parseEnv`（20.12 才加），`dsh-app-boot` 直接语法错误
+- Node 22：✅ 实测 `dsh web` 正常（`node:sqlite` 需 `--experimental-sqlite`）
+- Node 24：✅ 官方目标
+
+详见 [docs/NODE-VERSION.md](docs/NODE-VERSION.md)。
+社区有 Node 18 的 iOS 预编译 deb（`imcynic/nodejs-ios`），可用来验证越狱环境
+与签名思路，但跑不了 dsh。

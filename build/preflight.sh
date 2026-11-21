@@ -26,7 +26,7 @@ fi
 
 echo "[4] 交叉工具（可选）"
 for t in vtool ldid otool codesign; do
-  command -v "$t" >/dev/null && ok "$t" || warn "缺 $t（打包/改平台号时才需要；ldid 可 brew install ldid）"
+  if command -v "$t" >/dev/null; then ok "$t"; else warn "缺 ${t}（打包/改平台号时才需要；ldid 可 brew install ldid）"; fi
 done
 
 echo "[5] host node（给 configure/依赖生成用）"
