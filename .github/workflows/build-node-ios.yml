@@ -30,11 +30,11 @@ jobs:
         with:
           node-version: "24"
 
-      - name: Cache Node source + host tools
-        uses: actions/cache@v4
+      - name: Restore host tools
+        uses: actions/cache/restore@v4
         with:
           path: work/host
-          key: node-ios-${{ inputs.node_ref }}-hosttools-v3
+          key: node-ios-${{ inputs.node_ref }}-hosttools-v4
 
       - name: Preflight
         run: bash build/preflight.sh
@@ -48,6 +48,13 @@ jobs:
           WORK: ${{ github.workspace }}/work
           OUT: ${{ github.workspace }}/out
         run: bash build/build-node-ios.sh
+
+      - name: Save host tools
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: work/host
+          key: node-ios-${{ inputs.node_ref }}-hosttools-v4
 
       - name: Install signing tools
         run: brew install ldid || true
