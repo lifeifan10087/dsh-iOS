@@ -106,13 +106,21 @@ fi
 echo "== 阶段B：iOS 目标构建"
 TARGET="arm64-apple-ios${MIN_IOS}"
 mkdir -p "$WORK/bin"
+# 包装器按输出路径判断：写进 obj.host/ 的（构建期工具）用 macOS 编译器，
+# 其余（真正的目标代码）才加上 iOS 三元组。这样不用猜 gyp 生成哪些 host makefile。
 cat > "$WORK/bin/ios-cc" <<EOF
 #!/bin/sh
-exec xcrun -sdk iphoneos clang -target $TARGET -isysroot $SDK -I$WORK/compat -O1 "\$@"
+case "\$*" in
+  *obj.host/*|*lib.host/*) exec xcrun --sdk macosx clang "\$@" ;;
+  *) exec xcrun -sdk iphoneos clang -target $TARGET -isysroot $SDK -I$WORK/compat -O1 "\$@" ;;
+esac
 EOF
 cat > "$WORK/bin/ios-cxx" <<EOF
 #!/bin/sh
-exec xcrun -sdk iphoneos clang++ -target $TARGET -isysroot $SDK -I$WORK/compat -O1 "\$@"
+case "\$*" in
+  *obj.host/*|*lib.host/*) exec xcrun --sdk macosx clang++ "\$@" ;;
+  *) exec xcrun -sdk iphoneos clang++ -target $TARGET -isysroot $SDK -I$WORK/compat -O1 "\$@" ;;
+esac
 EOF
 chmod +x "$WORK/bin/ios-cc" "$WORK/bin/ios-cxx"
 export CC="$WORK/bin/ios-cc" CXX="$WORK/bin/ios-cxx"
