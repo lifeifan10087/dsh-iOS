@@ -36,6 +36,15 @@ jobs:
           path: work/host
           key: node-ios-${{ inputs.node_ref }}-hosttools-v4
 
+      - name: Free disk space
+        run: |
+          echo "before:"; df -h / | tail -1
+          sudo rm -rf /Applications/Xcode*.app/Contents/Developer/Platforms/AppleTV*.platform || true
+          sudo rm -rf /Applications/Xcode*.app/Contents/Developer/Platforms/Watch*.platform || true
+          sudo rm -rf /Library/Developer/CoreSimulator/Profiles/Runtimes/* || true
+          rm -rf "${GITHUB_WORKSPACE}/work/node/.git" || true
+          echo "after:"; df -h / | tail -1
+
       - name: Preflight
         run: bash build/preflight.sh
 
