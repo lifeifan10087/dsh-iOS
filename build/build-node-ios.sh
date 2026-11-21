@@ -156,6 +156,9 @@ if [ "${PROBE:-0}" = "2" ]; then
   exit 0
 fi
 
+# 清掉可能残留的目标/宿主对象，避免混进上次运行编坏的符号
+rm -rf out/Release/obj.host out/Release/obj.target out/Release/node_js2c 2>/dev/null || true
+
 echo "== 阶段B 编译（约 30-60 分钟）"
 set +e
 # 关键：host 工具集必须用 macOS 编译器。gyp 的 host 规则默认继承 CC/CXX（也就是
