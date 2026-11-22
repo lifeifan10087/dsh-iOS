@@ -11,6 +11,10 @@ on:
         description: Minimum iOS version
         default: "14.0"
         required: true
+      node_tarball:
+        description: Official source tarball URL (enables iOS port patch)
+        default: ""
+        required: false
       probe:
         description: Only run toolchain diagnostics
         default: "0"
@@ -54,6 +58,7 @@ jobs:
           NODE_VER: ${{ inputs.node_ref }}
           MIN_IOS: ${{ inputs.min_ios }}
           PROBE: ${{ inputs.probe }}
+          NODE_TARBALL_URL: ${{ inputs.node_tarball }}
           WORK: ${{ github.workspace }}/work
           OUT: ${{ github.workspace }}/out
         run: bash build/build-node-ios.sh
