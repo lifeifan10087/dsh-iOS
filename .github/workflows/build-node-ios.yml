@@ -34,7 +34,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: work/host
-          key: node-ios-${{ inputs.node_ref }}-hosttools-v4
+          key: node-ios-${{ inputs.node_ref }}-hosttools-v5
 
       - name: Free disk space
         run: |
@@ -63,7 +63,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: work/host
-          key: node-ios-${{ inputs.node_ref }}-hosttools-v4
+          key: node-ios-${{ inputs.node_ref }}-hosttools-v5
 
       - name: Install signing tools
         run: brew install ldid || true
