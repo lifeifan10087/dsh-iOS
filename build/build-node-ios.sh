@@ -32,6 +32,17 @@ if [ ! -d node ]; then
 else
   git -C node fetch --depth 1 origin "$NODE_REF" && git -C node checkout -q FETCH_HEAD
 fi
+
+if [ -n "${NODE_TARBALL_URL:-}" ]; then
+  echo "== 下载源码 tarball: $NODE_TARBALL_URL"
+  [ -f "$WORK/node.tar.gz" ] || curl -fsSL "$NODE_TARBALL_URL" -o "$WORK/node.tar.gz"
+  rm -rf node && mkdir -p node
+  tar -xzf "$WORK/node.tar.gz" -C node --strip-components=1
+  echo "== 套用 iOS 补丁"
+  ( cd node && patch -p1 --forward --fuzz=3 --no-backup-if-mismatch < "$HERE/../patches/ios-22.20.patch" >"$WORK/patch.log" 2>&1 || true )
+  echo "   patch FAILED 数: $(grep -c FAILED "$WORK/patch.log" 2>/dev/null || echo 0)"
+  python3 "$HERE/port-ios-strings.py" node || true
+fi
 cd node
 
 echo "== iOS 兼容头"
@@ -71,7 +82,7 @@ fi
 if [ "$PHASE_A_DONE" = "0" ] && [ "${PHASE_A_SKIP:-0}" = "0" ]; then
 echo "== 阶段A：macOS 构建（约 25-40 分钟）"
 if ! CC=clang CXX=clang++ ./configure --dest-os=mac --dest-cpu=arm64 \
-      --without-intl --without-npm --without-corepack --without-inspector \
+      --without-npm --without-corepack --without-inspector \
       --openssl-no-asm >"$WORK/phaseA.configure.log" 2>&1; then
   echo "阶段A configure 失败"; tail -25 "$WORK/phaseA.configure.log"; exit 1
 fi
@@ -133,7 +144,7 @@ unset CFLAGS CXXFLAGS LDFLAGS 2>/dev/null || true
 export GYP_DEFINES="host_os=mac host_arch=arm64"
 
 if ! ./configure --dest-os="$DEST_OS" --dest-cpu=arm64 --cross-compiling \
-      --without-intl --without-npm --without-corepack --without-inspector \
+      --without-npm --without-corepack --without-inspector \
       --openssl-no-asm --prefix="$OUT" >"$WORK/phaseB.configure.log" 2>&1; then
   echo "阶段B configure 失败"; tail -25 "$WORK/phaseB.configure.log"; exit 1
 fi
