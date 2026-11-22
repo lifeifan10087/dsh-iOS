@@ -25,7 +25,7 @@ targets = []
 for tool in tools:
     targets += [out / f"{tool}.host.mk", out / f"{tool}.target.mk"]
 # 所有 host 工具集的 makefile 都要改（simdutf、libuv、v8_libbase 等也参与 host 构建）
-targets += sorted(out.glob("*.host.mk"))
+targets += sorted(out.rglob("*.host.mk"))
 
 for mk in dict.fromkeys(targets):
     if mk is not None and mk.exists():
