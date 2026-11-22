@@ -124,19 +124,35 @@ TARGET="arm64-apple-ios${MIN_IOS}"
 mkdir -p "$WORK/bin"
 # 包装器按输出路径判断：写进 obj.host/ 的（构建期工具）用 macOS 编译器，
 # 其余（真正的目标代码）才加上 iOS 三元组。这样不用猜 gyp 生成哪些 host makefile。
+#
+# 链接期必须补 -framework CoreFoundation / CoreServices：abseil 的 cctz
+# （deps/v8/third_party/abseil-cpp 的 time_zone_lookup.cc）在 __APPLE__ 下走
+# CFTimeZoneCopyDefault 分支，符号来自 CoreFoundation。node 的 gyp 只在
+# OS=="mac" 分支自动加这两个框架，我们走的是 iOS 目标，所以会报
+# "_CFRelease/_CFTimeZoneCopyDefault undefined"。只在链接（无 -c）时追加，
+# 防止污染编译期的 -Wunused-command-line-argument。
+# -liconv 同理：Darwin 分支的 iconv 链接只有 mac 目标才会带，iPhoneOS SDK 里
+# 有 libiconv.tbd，提前带上，省一次 60 分钟的往返。
+IOS_LINK_FRAMEWORKS="-framework CoreFoundation -framework CoreServices -liconv"
 cat > "$WORK/bin/ios-cc" <<EOF
 #!/bin/sh
 case "\$*" in
   *obj.host/*|*lib.host/*) exec xcrun --sdk macosx clang "\$@" ;;
-  *) exec xcrun -sdk iphoneos clang -target $TARGET -isysroot $SDK -I$WORK/compat -O1 -DDSH_TARGET_IOS=1 "\$@" ;;
 esac
+case " \$* " in
+  *" -c "*) exec xcrun -sdk iphoneos clang -target $TARGET -isysroot $SDK -I$WORK/compat -O1 -DDSH_TARGET_IOS=1 "\$@" ;;
+esac
+exec xcrun -sdk iphoneos clang -target $TARGET -isysroot $SDK -I$WORK/compat -O1 -DDSH_TARGET_IOS=1 "\$@" $IOS_LINK_FRAMEWORKS
 EOF
 cat > "$WORK/bin/ios-cxx" <<EOF
 #!/bin/sh
 case "\$*" in
   *obj.host/*|*lib.host/*) exec xcrun --sdk macosx clang++ "\$@" ;;
-  *) exec xcrun -sdk iphoneos clang++ -target $TARGET -isysroot $SDK -I$WORK/compat -O1 -DDSH_TARGET_IOS=1 "\$@" ;;
 esac
+case " \$* " in
+  *" -c "*) exec xcrun -sdk iphoneos clang++ -target $TARGET -isysroot $SDK -I$WORK/compat -O1 -DDSH_TARGET_IOS=1 "\$@" ;;
+esac
+exec xcrun -sdk iphoneos clang++ -target $TARGET -isysroot $SDK -I$WORK/compat -O1 -DDSH_TARGET_IOS=1 "\$@" $IOS_LINK_FRAMEWORKS
 EOF
 chmod +x "$WORK/bin/ios-cc" "$WORK/bin/ios-cxx"
 export CC="$WORK/bin/ios-cc" CXX="$WORK/bin/ios-cxx"
