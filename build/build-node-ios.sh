@@ -55,13 +55,13 @@ echo "== 注入 iOS gyp 覆盖"
 python3 "$HERE/apply-ios-overrides.py" . || true
 
 # ============ 阶段A：macOS 全量构建，拿下构建期工具与生成文件 ============
-HOSTTOOLS="node_js2c bytecode_builtins_list_generator torque gen-regexp-special-case"
+HOSTTOOLS="node_js2c bytecode_builtins_list_generator torque gen-regexp-special-case mksnapshot"
 
 if [ "${PROBE:-0}" = "2" ]; then
   echo "== PROBE2：跳过阶段A，只做阶段B configure"
   PHASE_A_SKIP=1
 fi
-if [ -f "$WORK/host/torque" ] && [ -f "$WORK/host/gen.tar.gz" ]; then
+if [ -f "$WORK/host/torque" ] && [ -f "$WORK/host/mksnapshot" ] && [ -f "$WORK/host/gen.tar.gz" ]; then
   echo "== 阶段A：命中缓存，跳过（已有 torque + gen.tar.gz）"
   PHASE_A_DONE=1
 else
@@ -83,6 +83,7 @@ make -j"$JOBS" V=0 \
   out/Release/bytecode_builtins_list_generator \
   out/Release/torque \
   out/Release/gen-regexp-special-case \
+  out/Release/mksnapshot \
   out/Release/obj/gen/node_javascript.cc \
   >"$WORK/phaseA.log" 2>&1
 rcA=$?
