@@ -128,14 +128,14 @@ cat > "$WORK/bin/ios-cc" <<EOF
 #!/bin/sh
 case "\$*" in
   *obj.host/*|*lib.host/*) exec xcrun --sdk macosx clang "\$@" ;;
-  *) exec xcrun -sdk iphoneos clang -target $TARGET -isysroot $SDK -I$WORK/compat -O1 "\$@" ;;
+  *) exec xcrun -sdk iphoneos clang -target $TARGET -isysroot $SDK -I$WORK/compat -O1 -DDSH_TARGET_IOS=1 "\$@" ;;
 esac
 EOF
 cat > "$WORK/bin/ios-cxx" <<EOF
 #!/bin/sh
 case "\$*" in
   *obj.host/*|*lib.host/*) exec xcrun --sdk macosx clang++ "\$@" ;;
-  *) exec xcrun -sdk iphoneos clang++ -target $TARGET -isysroot $SDK -I$WORK/compat -O1 "\$@" ;;
+  *) exec xcrun -sdk iphoneos clang++ -target $TARGET -isysroot $SDK -I$WORK/compat -O1 -DDSH_TARGET_IOS=1 "\$@" ;;
 esac
 EOF
 chmod +x "$WORK/bin/ios-cc" "$WORK/bin/ios-cxx"
