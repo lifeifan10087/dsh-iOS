@@ -27,13 +27,13 @@ echo "SDK $SDK_VER | iOS min $MIN_IOS | 源码 $NODE_REF | jobs $JOBS"
 
 mkdir -p "$WORK" "$OUT"
 cd "$WORK"
-if [ ! -d node ]; then
-  git clone --depth 1 --branch "$NODE_REF" "$NODE_REPO" node
+if [ -z "${NODE_TARBALL_URL:-}" ]; then
+  if [ ! -d node ]; then
+    git clone --depth 1 --branch "$NODE_REF" "$NODE_REPO" node
+  else
+    git -C node fetch --depth 1 origin "$NODE_REF" && git -C node checkout -q FETCH_HEAD
+  fi
 else
-  git -C node fetch --depth 1 origin "$NODE_REF" && git -C node checkout -q FETCH_HEAD
-fi
-
-if [ -n "${NODE_TARBALL_URL:-}" ]; then
   echo "== 下载源码 tarball: $NODE_TARBALL_URL"
   [ -f "$WORK/node.tar.gz" ] || curl -fsSL "$NODE_TARBALL_URL" -o "$WORK/node.tar.gz"
   rm -rf node && mkdir -p node
