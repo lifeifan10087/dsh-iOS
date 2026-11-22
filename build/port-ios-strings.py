@@ -48,4 +48,19 @@ edit("node.gypi",
      """[ 'coverage=="true" and node_shared=="false" and OS in "mac ios freebsd linux openharmony"', {""",
      "coverage 条件加 ios")
 
+
+# iOS 上 Security.framework 没有 SecTrustSettings* / 钥匙串检索 API，
+# 用 DSH_TARGET_IOS 把 macOS 专属分支关掉（iOS 编译时由 wrapper 定义该宏）
+ios_guard = "defined(__APPLE__) && !defined(DSH_TARGET_IOS)"
+ctx = root / "src/crypto/crypto_context.cc"
+if ctx.exists():
+    t = ctx.read_text(encoding="utf-8", errors="surrogateescape")
+    n = t.count("#ifdef __APPLE__")
+    if n and "DSH_TARGET_IOS" not in t:
+        t = t.replace("#ifdef __APPLE__", f"#if {ios_guard}")
+        ctx.write_text(t, encoding="utf-8", errors="surrogateescape")
+        print(f"  改好 src/crypto/crypto_context.cc: {n} 处 __APPLE__ 加上 !DSH_TARGET_IOS")
+    else:
+        print(f"  skip src/crypto/crypto_context.cc（已处理或不含 __APPLE__）")
+
 print(f"完成，改动 {len(edits)} 处")
