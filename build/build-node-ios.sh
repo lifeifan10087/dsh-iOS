@@ -167,7 +167,7 @@ cnt=0
 while IFS= read -r f; do
   [ -n "$f" ] || continue
   : > "$f"; cnt=$((cnt+1))
-done < <(find out -name '*.host.mk' 2>/dev/null)
+done < <(find out -name '*.host.mk' 2>/dev/null | grep -v '/tools/icu/')
 echo "   清空 host makefile $cnt 个"
 for t in $HOSTTOOLS; do
   f="out/$t.target.mk"; [ -f "$f" ] && : > "$f" && echo "   清空 $f"
