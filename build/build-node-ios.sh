@@ -149,11 +149,16 @@ MACSDK="$(xcrun --sdk macosx --show-sdk-path)"
 python3 "$HERE/patch-host-mk.py" out "$MACSDK" $HOSTTOOLS || true
 # 阶段A已经给了这些工具的可执行文件，这里直接把它们的 makefile 清空，
 # 彻底阻止 make 在阶段B重编（重编会把 simdutf 等依赖编成 iOS 版，链接必炸）
+# 把**所有** host 工具集 makefile 清空（包括 tools/v8_gypfiles/ 下的嵌套文件）。
+# 不清的话阶段B会再编一遍 host 版 V8，磁盘直接爆掉（上次就是这个原因）。
+cnt=0
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  : > "$f"; cnt=$((cnt+1))
+done < <(find out -name '*.host.mk' 2>/dev/null)
+echo "   清空 host makefile $cnt 个"
 for t in $HOSTTOOLS; do
-  for suffix in target host; do
-    f="out/$t.$suffix.mk"
-    [ -f "$f" ] && : > "$f" && echo "   清空 $f"
-  done
+  f="out/$t.target.mk"; [ -f "$f" ] && : > "$f" && echo "   清空 $f"
 done
 python3 "$HERE/skip-generated.py" out || true
 
