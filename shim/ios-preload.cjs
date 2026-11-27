@@ -10,6 +10,14 @@
 //        --expose-internals --experimental-sqlite .../dsh/lib/bin.js web ...
 "use strict";
 
+// 越狱 iOS 上的 node 报告 process.platform === "ios"，但 dsh 依赖的若干原生模块
+// （@deepseek-ai/node-addon-system 的 flock 等）只认 linux/darwin，遇到 ios 直接抛
+// ERR_FLOCK_UNSUPPORTED_PLATFORM，会话持久化就挂。这里统一谎报成 darwin/arm64：
+// 我们已经把 darwin-arm64 那套原生 addon 的 LC_BUILD_VERSION 改成 iOS（platform=2）
+// 并重签，所以按 darwin 解析出来的 addon 在设备上能正常加载。
+Object.defineProperty(process, "platform", { value: "darwin", configurable: true });
+Object.defineProperty(process, "arch", { value: "arm64", configurable: true });
+
 require("./wasm-fake.cjs");
 
 const { install } = require("./fetch-http.cjs");
