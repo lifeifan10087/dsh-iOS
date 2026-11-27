@@ -9,6 +9,15 @@ PRE=/var/mobile/Library/dsh/shim/ios-preload.cjs
 APP=/var/mobile/Library/dsh/app/node_modules/@deepseek-ai/dsh/lib/bin.js
 LOG=/var/mobile/Library/Logs/dsh-engine.log
 
+# 模型凭证等环境变量放这里（600），有就用
+if [ -f /var/mobile/Library/dsh/env.sh ]; then
+  . /var/mobile/Library/dsh/env.sh
+  export DEEPSEEK_API_KEY DEEPSEEK_BASE_URL
+fi
+
+# 原生 addon 必须先搬到 /var/jb，否则 dlopen 会被沙箱拦（幂等）
+[ -x /var/mobile/Library/dsh/relocate-addons.sh ] && sh /var/mobile/Library/dsh/relocate-addons.sh >/dev/null 2>&1
+
 if ps -A -o args 2>/dev/null | grep -q "[d]sh/lib/bin.js web"; then
   echo "already running"
   exit 0
