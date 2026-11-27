@@ -34,9 +34,17 @@ echo "== 1) 探测设备"
 JB="$(S '[ -d /var/jb ] && echo /var/jb' | tr -d '\r')"
 LAUNCHER="$JB/usr/local/bin/dsh-ios"
 HOME_DIR="/var/mobile/Library/dsh"
+# node 路径：环境变量 > deb 装的位置 > 系统 node > 启动器里 exec 的那个
 NODE="${NODE_BIN:-}"
-[ -n "$NODE" ] || NODE="$(S "sed -n 's|.*exec \\\"\\?\\([^ \\\"]*node\\)\\\"\\?.*|\\1|p' $LAUNCHER 2>/dev/null | head -1" | tr -d '\r')"
-[ -n "$NODE" ] || NODE="/var/jb/usr/bin/node"
+if [ -z "$NODE" ]; then
+  for c in "$JB/usr/local/lib/dsh/node" "$JB/usr/bin/node"; do
+    if S "[ -x '$c' ]" 2>/dev/null; then NODE="$c"; break; fi
+  done
+fi
+if [ -z "$NODE" ]; then
+  NODE="$(S "sed -n 's|.*exec \\\"\\?\\([^ \\\"]*node\\)\\\"\\?.*|\\1|p' $LAUNCHER 2>/dev/null | head -1" | tr -d '\r')"
+fi
+[ -n "$NODE" ] || NODE="$JB/usr/bin/node"
 echo "   越狱前缀: ${JB:-/（rootful）}"
 echo "   node: $NODE"
 S "[ -x '$NODE' ]" || { echo "设备上找不到 $NODE"; exit 1; }
