@@ -3,6 +3,9 @@
 # iPhone 上用 Sileo/Filza 点开即装，postinst 自动完成剩余步骤（不需要 SSH）。
 # 用法: bash deploy/make-install-deb.sh <node-ios 二进制> [依赖包 tgz]
 set -euo pipefail
+# root 的 umask 常是 077：不打散的话 /var、/var/jb/... 会被打成 700，
+# 装上设备就会改坏 /var 的权限（HANDOFF 坑表「deb 装完目录 700」）。
+umask 022
 NODE_BIN="${1:?用法: make-install-deb.sh <node-ios 二进制> [node_modules.tgz]}"
 MODS="${2:-out/node_modules.tgz}"
 VER="${VER:-0.2.2}"
@@ -15,16 +18,17 @@ APP="$JB/usr/local/lib/dsh"
 [ -f "$MODS" ] || { echo "找不到依赖包: $MODS（先跑 deploy/bundle-node-modules.sh）"; exit 1; }
 
 mkdir -p "$STAGE/$APP" "$STAGE/$JB/usr/local/bin" "$STAGE/$JB/Library/LaunchDaemons" "$STAGE/DEBIAN"
+chmod 755 "$STAGE/$JB" "$STAGE/$JB/usr" "$STAGE/$JB/usr/local" "$STAGE/$JB/usr/local/lib" "$STAGE/$JB/usr/local/bin" "$STAGE/$JB/Library" "$STAGE/$JB/Library/LaunchDaemons"
 cp "$NODE_BIN" "$STAGE/$APP/node"; chmod 755 "$STAGE/$APP/node"
-cp "$MODS" "$STAGE/$APP/node_modules.tgz"
+cp "$MODS" "$STAGE/$APP/node_modules.tgz"; chmod 644 "$STAGE/$APP/node_modules.tgz"
 
-# 启动器
+# 启动器（--jitless：越狱机没给 JIT 授权时 node 会 SIGBUS，见 HANDOFF 坑表）
 cat > "$STAGE/$JB/usr/local/bin/dsh-ios" <<'EOF'
 #!/bin/sh
 export DSH_HOME=/var/mobile/Library/dsh
-exec /var/jb/usr/local/lib/dsh/node --expose-internals --experimental-sqlite \
+exec /var/jb/usr/local/lib/dsh/node --jitless --expose-internals --experimental-sqlite \
   --max-old-space-size=2048 \
-  /var/jb/usr/local/lib/dsh/app/node_modules/@deepseek-ai/dsh/lib/bin.js "$@"
+  /var/mobile/Library/dsh/app/node_modules/@deepseek-ai/dsh/lib/bin.js "$@"
 EOF
 chmod 755 "$STAGE/$JB/usr/local/bin/dsh-ios"
 
@@ -85,10 +89,16 @@ launchctl bootout system /var/jb/Library/LaunchDaemons/com.dsh.engine.plist 2>/d
 launchctl bootstrap system /var/jb/Library/LaunchDaemons/com.dsh.engine.plist 2>/dev/null || \
   launchctl load /var/jb/Library/LaunchDaemons/com.dsh.engine.plist || true
 sleep 5
-grep -oE 'http://127\.0\.0\.1:3080/\?token=[A-Za-z0-9_-]+' /var/mobile/Library/Logs/dsh-engine.log 2>/dev/null | tail -1 > "$DSH_HOME/web-url.txt" || true
+URL="$(grep -oE 'http://127\.0\.0\.1:3080/\?token=[A-Za-z0-9_-]+' /var/mobile/Library/Logs/dsh-engine.log 2>/dev/null | tail -1 || true)"
+[ -n "$URL" ] && printf '%s' "$URL" > "$DSH_HOME/web-url.txt"
+# 再放一份到「文件」App 能看到的目录，方便用 Filza 打开
+mkdir -p /var/mobile/Documents 2>/dev/null || true
+[ -n "$URL" ] && printf '%s\n' "$URL" > /var/mobile/Documents/dsh-url.txt 2>/dev/null || true
 exit 0
 EOF
 chmod 755 "$STAGE/DEBIAN/postinst"
+
+chmod 755 "$STAGE" "$STAGE/DEBIAN"
 
 cat > "$STAGE/DEBIAN/control" <<EOF
 Package: com.dsh.go
@@ -98,9 +108,11 @@ Architecture: iphoneos-arm64
 Description: DeepSeek Harness engine for iOS (bundled arm64 iOS Node)
 Maintainer: local
 Section: Development
-Depends: firmware (>= 14.0)
+Depends: firmware (>= 14.0), gzip, ldid
 EOF
 
+chmod 755 "$STAGE" "$STAGE/var" "$STAGE/$APP" "$STAGE/DEBIAN"
+chmod 644 "$STAGE/$JB/Library/LaunchDaemons/com.dsh.engine.plist"
 OUT_DIR="${OUT_DIR:-out}"; mkdir -p "$OUT_DIR"
 OUT_DEB="$OUT_DIR/dsh-go_${VER}_iphoneos-arm64.deb"
 dpkg-deb -Zgzip -b "$STAGE" "$OUT_DEB" >/dev/null
