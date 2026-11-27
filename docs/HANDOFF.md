@@ -79,6 +79,9 @@ Fetch 子集（真 ReadableStream 的 body、gzip/deflate/br 解压、redirect f
   （实测 `spawn("/var/jb/usr/bin/ls")` OK，`spawn("/tmp/t1.sh")` EPERM）；另外设备上**没有 `/bin/sh`**
 - 解法：把 pnpm 命令做成 **Mach-O 启动器**（`launcher/pnpm.c`，execv 到 node + pnpm.cjs），
   用 `build-jitlaunch.yml` 编出来，装到 `/var/jb/usr/bin/pnpm`
+- **在那之前插件安装已经可用**：`deploy/device/add-plugin.sh`（设备上 `/var/mobile/Library/dsh/add-plugin.sh`）
+  直接 cd 进 profile 跑 pnpm，绕开 `dsh plugin` 的 spawn。实测：
+  `add-plugin.sh web add is-odd@3.0.1` → 2.8s 装好，`ls` 能看到，`remove` 后干净，lockfile 正常写入。
 
 ## 关键坐标
 
