@@ -19,9 +19,15 @@
 Node 自带 undici（`fetch` / `node:http` 的 `WebSocket`）在**模块加载期**就要 `WebAssembly.compile`，
 于是 dsh 直接 `fatal load failure`。解法是预载 `shim/wasm-fake.cjs`（假 WebAssembly，只保证加载能过）。
 
-**已知缺口**：① 守护进程常驻没解决（launchd 报 `JETSAM_REASON_MEMORY_PERPROCESSLIMIT`，
-当前靠 nohup 脱离会话运行，重启失效）；② 出站 HTTP（模型调用）会因为 undici 的解析器是假的而失败，
-需要给 fetch 做真替身（见「下一步」）。
+**出站 HTTP 也通了**（2026-11-27 20:55）：`shim/fetch-http.cjs` 用 `node:http/https` 实现了
+Fetch 子集（真 ReadableStream 的 body、gzip/deflate/br 解压、redirect follow/manual/error、
+跳转时带 cookie、AbortSignal），设备实测：https 拉到 180KB 正常、SSE 逐块读正常、
+`/?token=` → 303 → 带 cookie → **200 + 40102 字节 HTML**。
+
+**唯一缺口：常驻**。launchd 起不来（`JETSAM_REASON_MEMORY_PERPROCESSLIMIT`，384MB 堆也一样，
+dsh 常驻 RSS ~283MB，守护进程上限低于这个），`gui/501` 域报 `Domain does not support specified action`，
+设备上也没有 cron。现在用 `deploy/start-engine.sh`（设备上 `/var/mobile/Library/dsh/start-engine.sh`）
+nohup 起，活得过 SSH 断开，**重启后要重跑一次**。
 
 ## 关键坐标
 
@@ -35,7 +41,8 @@ Node 自带 undici（`fetch` / `node:http` 的 `WebSocket`）在**模块加载�
 | 产物 | `out/node-ios-patched`（110MB，platform=2）、`out/node_modules.tgz`（183MB） |
 | 一键包 | `out/dsh-go_0.2.4_iphoneos-arm64.deb`（含 wasm 替身）；手机侧 `/sdcard/Download/DSH-Go/` |
 | 设备 node | `/var/jb/usr/local/lib/dsh/node`（22.20.0，旧版备份 `node.bak-<时间戳>`） |
-| 设备替身 | `/var/mobile/Library/dsh/wasm-fake.cjs` |
+| 设备替身 | `/var/mobile/Library/dsh/shim/{ios-preload,wasm-fake,fetch-http}.cjs` |
+| 启动脚本 | 设备 `/var/mobile/Library/dsh/start-engine.sh`（幂等，已在跑就不重复起） |
 | 设备 | `mobile@192.168.10.229`，密码由用户提供；`echo <pw> \| sudo -S -p ""` 可提权 |
 | 设备已装 | `gzip`、`ldid`、`com.dsh.go`(0.2.2，内含 22.9 版 node) |
 | 待装 | `/tmp/ios-mcp.deb`（23.6MB，已下载，未安装） |
@@ -63,6 +70,8 @@ Node 自带 undici（`fetch` / `node:http` 的 `WebSocket`）在**模块加载�
 | node 一启动 SIGBUS | 设备 JIT 未授权 | 启动器加 `--jitless` |
 | deb 装完目录 700 | 打包时 mkdir 权限 | `make-install-deb.sh` 已加 chmod 755 |
 | `_CFRelease/_CFTimeZoneCopyDefault undefined`（链接 `cctest`/`embedtest`/`node`） | abseil 的 cctz `time_zone_lookup.cc` 在 `__APPLE__` 下走 CoreFoundation 分支；node 的 gyp 只在 `OS=="mac"` 分支才自动带 `-framework CoreFoundation`，我们走 iOS 目标 | `build-node-ios.sh` 的 `ios-cc`/`ios-cxx` 包装器：**只在链接（无 `-c`）时**追加 `-framework CoreFoundation -framework CoreServices -liconv` |
+| `ECONNRESET` / `Error: aborted` 崩进程 | 替身里用 `res.destroy()` 收尾、或 `Readable.toWeb` 时没人接 `res` 的 `error`/`aborted` 事件 | 用 `Readable.toWeb` + `res.on("error"|"aborted", ()=>{})`；跳转时留空的 error 监听（`emit('error')` 无监听会变成 uncaughtException） |
+| 带 token 仍 401 | `/?token=` 是 303 + Set-Cookie，客户端必须带 cookie 再请求 | 替身在同源跳转时把 `set-cookie` 合进 `cookie` 头 |
 | `Bus error: 10`（不带 `--jitless`） | 越狱机没有 JIT 授权；`jbctl proc_set_debugged`（CS_DEBUGGED）和 `jbctl trustcache add` **都不管用**，jitprobe 实测 `MAP_JIT` 返回 EINVAL；崩溃报告显示 `KERN_PROTECTION_FAILURE` 在 `Builtins_InterpreterEntryTrampoline` | 只能 `--jitless`（保留 `launcher/jitlaunch.c` 作为记录，不再依赖它） |
 | `ReferenceError: WebAssembly is not defined` → `dsh: fatal load failure` | jitless 下 V8 关掉 WebAssembly，undici 模块加载期就要它 | 预载 `shim/wasm-fake.cjs`（`--require`），加载能过；真解析仍不可用（见下一步） |
 | launchd 启动返回 `78 EX_CONFIG` | 用 shell 脚本当 `ProgramArguments[0]` 时被判配置错误 | plist 里**直接写 node 的绝对真实路径**（`readlink -f /var/jb/...`），参数全部展开 |
@@ -80,22 +89,16 @@ Node 自带 undici（`fetch` / `node:http` 的 `WebSocket`）在**模块加载�
   postinst 自动起引擎并把 token 写到 `/var/mobile/Documents/dsh-url.txt`。
 - 本机出口网段会漂：2026-11-22 是 `10.111.33.x`（跟手机不同网段），11-27 回到 `192.168.10.216`。
 
-## 下一步（按顺序，2026-11-27 更新）
+## 下一步（按顺序，2026-11-27 21:00 更新）
 
-1. **常驻**：把引擎做成事件重启也能自动起来 —— 试 LaunchAgent（`gui/501`，内存上限高）或给
-   LaunchDaemon 加 jetsam 豁免（越狱侧一般有 `jetsamctl`/`memorystatus` 钩子）。当前可用的临时起法：
-   ```sh
-   nohup /var/jb/usr/local/lib/dsh/node --jitless --require /var/mobile/Library/dsh/wasm-fake.cjs \
-     --expose-internals --max-old-space-size=2048 --experimental-sqlite \
-     /var/mobile/Library/dsh/app/node_modules/@deepseek-ai/dsh/lib/bin.js \
-     web --host 127.0.0.1 --port 3080 --no-open >> /var/mobile/Library/Logs/dsh-engine.log 2>&1 &
-   ```
-2. **出站 HTTP**：undici 的 llhttp 是假模块，模型调用会卡。方案二选一：
-   (a) 预载一个 `fetch` 替身（`node:http`/`https` + `zlib` 实现流式 fetch，替换
-       `globalThis.fetch/Headers/Request/Response/FormData`，并把 `node_modules/undici` 换成同一实现）；
-   (b) 给 V8/undici 打个"用 Node 内部 llhttp 原生解析器"的补丁。先做 (a)，因为不动构建。
-3. 装 `/tmp/ios-mcp.deb`（重启后 /tmp 已清空，需重下）→ `cordis.patch.yml` 接 `mcp-ios`。
-4. 把 `deploy/make-install-deb.sh` 的 plist 也改成直连 node（现在仍是脚本 launcher）。
+1. **常驻（唯一硬缺口）**：给引擎争到 jetsam 豁免 —— 越狱侧常见做法是给 LaunchDaemon 的二进制加
+   `com.apple.private.memorystatus` 之类的 entitlement，或有 `jetsamctl`/`MemoryLimit` 工具；
+   也可以试试把引擎塞进 App 进程（DSH Go 的壳自己起子进程），App 的内存额度高得多。
+   现在：`sh /var/mobile/Library/dsh/start-engine.sh`，重启后要手动跑一次。
+2. **模型调用实测**：fetch 替身已通（https/SSE 都验过），下一步在引擎里配一个模型 key，跑一轮真实对话，
+   看 SSE 解析、超时、abort 是否符合预期。
+3. 装 ios-mcp（`/tmp/ios-mcp.deb` 重启后已清空，需重下）→ `cordis.patch.yml` 接 `mcp-ios`。
+4. 一把梭脚本 `deploy/after-build.sh` 里 deb 版本号还是 0.2.2，改成从产物读。
 
 ## 旧计划（已完成的部分留着备查）
 
