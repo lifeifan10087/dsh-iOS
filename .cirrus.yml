@@ -1,23 +1,18 @@
-# Cirrus CI：开源仓库免费 macOS（Apple Silicon），不需要绑卡
-# 用 GitHub 登录 cirrus-ci.org → Add repository → 勾 dsh-ios 即可
+# Cirrus CI：开源仓库免费 macOS（Apple Silicon），不需要绑卡、不需要新 GitHub 账号
+# 用法：GitHub 登录 cirrus-ci.org → 授权 → Add repository → 勾 dsh-ios
+# 想直接出 IPA：在 Cirrus 上手动 Run 这个 workflow（或 push 带 [ipa] 的提交）
 task:
-  name: build-node-ios
+  name: build-ipa
   macos_instance:
     image: ghcr.io/cirruslabs/macos-runner:sonoma
-  timeout_in: 150m
-
-  env:
-    NODE_VER: v24.9.0
-    MIN_IOS: "14.0"
-    HOMEBREW_NO_AUTO_UPDATE: "1"
+  timeout_in: 20m
 
   build_script:
-    - bash build/preflight.sh
-    - NODE_VER=$NODE_VER MIN_IOS=$MIN_IOS bash build/build-node-ios.sh
-    - (brew install ldid || true)
-    - bash build/patch-macho-ios.sh out/node-ios-arm64 out/node-ios-patched || cp out/node-ios-arm64 out/node-ios-patched
-    - DSH_VER=0.2.2-rc.1 bash deploy/bundle-node-modules.sh
+    - xcodebuild -version || true
+    - xcrun --sdk iphoneos --show-sdk-path
+    - bash shell/build-ipa.sh
+    - ls -lh out/DshGo.ipa
+    - (brew install ldid && ldid -e Payload/DshGo.app/DshGo | head -20) || true
 
   artifacts:
-    path: "out/node-ios-patched"
-    path: "out/node_modules.tgz"
+    path: "out/DshGo.ipa"
