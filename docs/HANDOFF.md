@@ -24,10 +24,17 @@ Fetch 子集（真 ReadableStream 的 body、gzip/deflate/br 解压、redirect f
 跳转时带 cookie、AbortSignal），设备实测：https 拉到 180KB 正常、SSE 逐块读正常、
 `/?token=` → 303 → 带 cookie → **200 + 40102 字节 HTML**。
 
-**唯一缺口：常驻**。launchd 起不来（`JETSAM_REASON_MEMORY_PERPROCESSLIMIT`，384MB 堆也一样，
-dsh 常驻 RSS ~283MB，守护进程上限低于这个），`gui/501` 域报 `Domain does not support specified action`，
-设备上也没有 cron。现在用 `deploy/start-engine.sh`（设备上 `/var/mobile/Library/dsh/start-engine.sh`）
-nohup 起，活得过 SSH 断开，**重启后要重跑一次**。
+**常驻也解决了**（2026-11-27 21:15）。关键有两条，缺一不可：
+
+1. **`ExecuteAllowed`**：Procursus 的 launchd 对 `/var/jb` 下的作业要求 plist 里带
+   `<key>ExecuteAllowed</key><true/>`，否则**任何**作业（连 `/bin/sleep`）都是 `78 EX_CONFIG`。
+2. **作业只负责 nohup，不负责运行**：launchd 作业的进程自身带着 per-process jetsam 限额
+   （dsh 常驻 ~250MB，128MB 堆也超），但 `nohup` 出去、`ppid` 变成 1 的子进程不受该限额约束。
+
+所以最终形态是 `/var/jb/Library/LaunchDaemons/com.dsh.bootstrap.plist` → 跑
+`/var/mobile/Library/dsh/boot-start.sh`（幂等）→ nohup 出引擎 → sh 自己退出；
+`StartInterval=120` 让这个作业每两分钟复查一次，引擎挂了就重新拉起。
+实测：引擎 pid 2794、`ppid=1`、RSS 244MB，跨过心跳仍在，`GET /` = 401。
 
 ## 关键坐标
 
@@ -42,7 +49,9 @@ nohup 起，活得过 SSH 断开，**重启后要重跑一次**。
 | 一键包 | `out/dsh-go_0.2.4_iphoneos-arm64.deb`（含 wasm 替身）；手机侧 `/sdcard/Download/DSH-Go/` |
 | 设备 node | `/var/jb/usr/local/lib/dsh/node`（22.20.0，旧版备份 `node.bak-<时间戳>`） |
 | 设备替身 | `/var/mobile/Library/dsh/shim/{ios-preload,wasm-fake,fetch-http}.cjs` |
-| 启动脚本 | 设备 `/var/mobile/Library/dsh/start-engine.sh`（幂等，已在跑就不重复起） |
+| 自启作业 | `/var/jb/Library/LaunchDaemons/com.dsh.bootstrap.plist`（`ExecuteAllowed` + `StartInterval=120`） |
+| 自启脚本 | `/var/mobile/Library/dsh/boot-start.sh`（幂等，已在跑就跳过） |
+| 手动启动 | `deploy/start-engine.sh`（SSH 版） |
 | 设备 | `mobile@192.168.10.229`，密码由用户提供；`echo <pw> \| sudo -S -p ""` 可提权 |
 | 设备已装 | `gzip`、`ldid`、`com.dsh.go`(0.2.2，内含 22.9 版 node) |
 | 待装 | `/tmp/ios-mcp.deb`（23.6MB，已下载，未安装） |
@@ -70,6 +79,8 @@ nohup 起，活得过 SSH 断开，**重启后要重跑一次**。
 | node 一启动 SIGBUS | 设备 JIT 未授权 | 启动器加 `--jitless` |
 | deb 装完目录 700 | 打包时 mkdir 权限 | `make-install-deb.sh` 已加 chmod 755 |
 | `_CFRelease/_CFTimeZoneCopyDefault undefined`（链接 `cctest`/`embedtest`/`node`） | abseil 的 cctz `time_zone_lookup.cc` 在 `__APPLE__` 下走 CoreFoundation 分支；node 的 gyp 只在 `OS=="mac"` 分支才自动带 `-framework CoreFoundation`，我们走 iOS 目标 | `build-node-ios.sh` 的 `ios-cc`/`ios-cxx` 包装器：**只在链接（无 `-c`）时**追加 `-framework CoreFoundation -framework CoreServices -liconv` |
+| launchd 作业一律 `78 EX_CONFIG`（连 `/bin/sleep`） | Procursus launchd 要求 plist 带 `ExecuteAllowed` | 加 `<key>ExecuteAllowed</key><true/>` |
+| 作业能起但立刻 `JETSAM_REASON_MEMORY_PERPROCESSLIMIT` | 作业进程自身带 per-process 限额，dsh 常驻 ~250MB 超了 | 作业改成「nohup 出引擎后自己退出」，孤立的子进程不受限；`StartInterval` 做看门狗 |
 | `ECONNRESET` / `Error: aborted` 崩进程 | 替身里用 `res.destroy()` 收尾、或 `Readable.toWeb` 时没人接 `res` 的 `error`/`aborted` 事件 | 用 `Readable.toWeb` + `res.on("error"|"aborted", ()=>{})`；跳转时留空的 error 监听（`emit('error')` 无监听会变成 uncaughtException） |
 | 带 token 仍 401 | `/?token=` 是 303 + Set-Cookie，客户端必须带 cookie 再请求 | 替身在同源跳转时把 `set-cookie` 合进 `cookie` 头 |
 | `Bus error: 10`（不带 `--jitless`） | 越狱机没有 JIT 授权；`jbctl proc_set_debugged`（CS_DEBUGGED）和 `jbctl trustcache add` **都不管用**，jitprobe 实测 `MAP_JIT` 返回 EINVAL；崩溃报告显示 `KERN_PROTECTION_FAILURE` 在 `Builtins_InterpreterEntryTrampoline` | 只能 `--jitless`（保留 `launcher/jitlaunch.c` 作为记录，不再依赖它） |
@@ -91,10 +102,9 @@ nohup 起，活得过 SSH 断开，**重启后要重跑一次**。
 
 ## 下一步（按顺序，2026-11-27 21:00 更新）
 
-1. **常驻（唯一硬缺口）**：给引擎争到 jetsam 豁免 —— 越狱侧常见做法是给 LaunchDaemon 的二进制加
-   `com.apple.private.memorystatus` 之类的 entitlement，或有 `jetsamctl`/`MemoryLimit` 工具；
-   也可以试试把引擎塞进 App 进程（DSH Go 的壳自己起子进程），App 的内存额度高得多。
-   现在：`sh /var/mobile/Library/dsh/start-engine.sh`，重启后要手动跑一次。
+1. ~~常驻~~ 已解决（见「一句话状态」）。**待验证**：重启设备后是否自动起来 —— 这设备是半绑定越狱，
+   重启后要先在越狱 App 里重新激活，launchd 才会加载 `/var/jb/Library/LaunchDaemons`；届时顺带确认
+   引擎自动上线（`com.dsh.bootstrap` 的 `RunAtLoad`）。
 2. **模型调用实测**：fetch 替身已通（https/SSE 都验过），下一步在引擎里配一个模型 key，跑一轮真实对话，
    看 SSE 解析、超时、abort 是否符合预期。
 3. 装 ios-mcp（`/tmp/ios-mcp.deb` 重启后已清空，需重下）→ `cordis.patch.yml` 接 `mcp-ios`。
