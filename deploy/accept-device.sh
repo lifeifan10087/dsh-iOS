@@ -38,9 +38,14 @@ LOG="/var/mobile/Library/Logs/dsh-engine.log"
 
 NODE="${NODE_BIN:-}"
 if [ -z "$NODE" ]; then
+  for c in "$JB/usr/local/lib/dsh/node" "$JB/usr/bin/node"; do
+    if S "[ -x '$c' ]" 2>/dev/null; then NODE="$c"; break; fi
+  done
+fi
+if [ -z "$NODE" ]; then
   NODE="$(S "sed -n 's|.*exec \\\"\\?\\([^ \\\"]*node\\)\\\"\\?.*|\\1|p' $LAUNCHER 2>/dev/null | head -1" | tr -d '\r')"
 fi
-[ -n "$NODE" ] || NODE="/var/jb/usr/bin/node"
+[ -n "$NODE" ] || NODE="$JB/usr/bin/node"
 S "[ -x '$NODE' ]" 2>/dev/null && ok "node: $NODE" || { no "node 不存在: $NODE"; exit 1; }
 echo "  · 越狱前缀: ${JB:-/（rootful）}  启动器: $LAUNCHER"
 
