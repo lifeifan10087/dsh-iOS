@@ -42,7 +42,8 @@ chmod 644 "$STAGE/$JB/Library/LaunchDaemons/com.dsh.bootstrap.plist"
 
 mkdir -p "$STAGE/var/mobile/Library/dsh"
 cp "$KIT/deploy/device/boot-start.sh" "$STAGE/var/mobile/Library/dsh/boot-start.sh"
-chmod 755 "$STAGE/var/mobile/Library/dsh/boot-start.sh"
+cp "$KIT/deploy/device/relocate-addons.sh" "$STAGE/var/mobile/Library/dsh/relocate-addons.sh"
+chmod 755 "$STAGE/var/mobile/Library/dsh/boot-start.sh" "$STAGE/var/mobile/Library/dsh/relocate-addons.sh"
 
 # postinst：解依赖、套 JS 替身、加载守护进程、记录 token 地址
 cat > "$STAGE/DEBIAN/postinst" <<'EOF'
