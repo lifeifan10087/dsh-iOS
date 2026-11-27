@@ -56,6 +56,30 @@ Fetch 子集（真 ReadableStream 的 body、gzip/deflate/br 解压、redirect f
 `StartInterval=120` 让这个作业每两分钟复查一次，引擎挂了就重新拉起。
 实测：引擎 pid 2794、`ppid=1`、RSS 244MB，跨过心跳仍在，`GET /` = 401。
 
+## 手机操控 & 插件安装（2026-11-27 23:00）
+
+**手机操控已打通并验证**（`mcp__ios__*`）：
+- 来源：`com.witchan.ios-mcp`（tweak，注入 SpringBoard；装核心 dylib 即可，跳过 installd/frontboard 钩子）
+- 位置：`/var/jb/Library/MobileSubstrate/DynamicLibraries/ios-mcp.{dylib,plist}`，respring 后生效
+- 服务：`http://127.0.0.1:8090/mcp`（`/health` 200），工具：screenshot / tap_screen / tap_element /
+  swipe_screen / get_screen_info / get_clipboard / set_clipboard / launch_app / type_text / wake
+- 实测：读屏（414×896pt / 828×1792px @2x）、剪贴板写入读回 `dsh-on-ios-ok`、
+  `launch_app com.apple.Preferences` 并确认 frontmost
+- 注册：`profiles/*/cordis.patch.yml`，**必须写在 `insert:` 下面**（只写 id/name 会被当成改已有插件而忽略）：
+  ```yaml
+  - insert:
+      - id: mcp-ios
+        name: "@deepseek-ai/dsh-mcp-client"
+        config: { transport: streamable-http, serverName: ios, url: "http://127.0.0.1:8090/mcp" }
+  ```
+
+**pnpm 装好了但 `dsh plugin` 还起不来**：
+- `pnpm 10.18.0` 在设备上直跑正常（`/var/jb/usr/bin/pnpm` 目前是临时 shell 包装器）
+- 但 `dsh plugin` → `execa` → `spawn("pnpm")` 报 **EPERM**：这台设备上 **node 无法 spawn 脚本**
+  （实测 `spawn("/var/jb/usr/bin/ls")` OK，`spawn("/tmp/t1.sh")` EPERM）；另外设备上**没有 `/bin/sh`**
+- 解法：把 pnpm 命令做成 **Mach-O 启动器**（`launcher/pnpm.c`，execv 到 node + pnpm.cjs），
+  用 `build-jitlaunch.yml` 编出来，装到 `/var/jb/usr/bin/pnpm`
+
 ## 关键坐标
 
 | 项 | 值 |
@@ -103,6 +127,8 @@ Fetch 子集（真 ReadableStream 的 body、gzip/deflate/br 解压、redirect f
 | 作业能起但立刻 `JETSAM_REASON_MEMORY_PERPROCESSLIMIT` | 作业进程自身带 per-process 限额，dsh 常驻 ~250MB 超了 | 作业改成「nohup 出引擎后自己退出」，孤立的子进程不受限；`StartInterval` 做看门狗 |
 | `ERR_FLOCK_UNSUPPORTED_PLATFORM`（会话持久化失败） | `process.platform === "ios"`，flock 只认 linux/darwin | 预载里把 platform/arch 谎报成 darwin/arm64（darwin 那套 addon 已改成 platform=2） |
 | bash 工具 `SANDBOX_UNAVAILABLE` / 命令失败 | iOS 没有 bwrap/landlock/seatbelt，`dsh-sandbox-local` 的 runner 链为空 → fail closed | `DSH_PERMISSION_MODE=danger-full-access`（此时 `dsh-bash-sandbox` 直接跳过限制，不改代码） |
+| `dsh plugin` → `spawn pnpm EPERM` | 设备上 node 不能 spawn **脚本**（shebang），且没有 `/bin/sh` | pnpm 必须是 Mach-O 启动器（`launcher/pnpm.c`） |
+| tweak 装完 8090 没起来 | dylib 需要 respring 才加载 | `killall -9 SpringBoard`，等 15s 再查 `/health` |
 | `file system sandbox blocked mmap()` 加载 `.node` | 沙箱只允许从 `/var/jb` 之类的越狱路径映射可执行页 | `deploy/device/relocate-addons.sh` 搬到 `/var/jb/usr/local/lib/dsh/addons/` + 原处符号链接；`trustcache add`/`ldid` 都无效 |
 | `ECONNRESET` / `Error: aborted` 崩进程 | 替身里用 `res.destroy()` 收尾、或 `Readable.toWeb` 时没人接 `res` 的 `error`/`aborted` 事件 | 用 `Readable.toWeb` + `res.on("error"|"aborted", ()=>{})`；跳转时留空的 error 监听（`emit('error')` 无监听会变成 uncaughtException） |
 | 带 token 仍 401 | `/?token=` 是 303 + Set-Cookie，客户端必须带 cookie 再请求 | 替身在同源跳转时把 `set-cookie` 合进 `cookie` 头 |
