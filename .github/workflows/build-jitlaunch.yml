@@ -1,0 +1,42 @@
+name: build-jitlaunch
+
+# 只编那个几十行的 JIT 启动器（不碰 node，跑完约 1-2 分钟）
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  launcher:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build for iOS arm64
+        run: |
+          set -euo pipefail
+          SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+          echo "SDK: $SDK"
+          mkdir -p out
+          xcrun -sdk iphoneos clang -target arm64-apple-ios14.0 -isysroot "$SDK" \
+            -O2 -Wall -Wextra -o out/dsh-jitlaunch launcher/jitlaunch.c
+          file out/dsh-jitlaunch
+          vtool -show-build out/dsh-jitlaunch
+
+      - name: Build a tiny self-test (optional)
+        run: |
+          set -euo pipefail
+          SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+          printf '#include <stdio.h>\n#include <unistd.h>\nint main(){printf("hello from iOS binary\\n");return 0;}\n' > /tmp/hello.c
+          xcrun -sdk iphoneos clang -target arm64-apple-ios14.0 -isysroot "$SDK" -O2 -o out/hello-ios /tmp/hello.c
+          file out/hello-ios
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dsh-jitlaunch
+          path: |
+            out/dsh-jitlaunch
+            out/hello-ios
+          if-no-files-found: error
+          retention-days: 14
