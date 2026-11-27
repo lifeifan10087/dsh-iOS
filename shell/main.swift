@@ -24,17 +24,44 @@ final class ShellViewController: UIViewController, WKNavigationDelegate, WKUIDel
     }
 
     private func loadEntry() {
-        // 1) 优先读引擎写下的带 token 地址
-        if let s = try? String(contentsOfFile: "/var/mobile/Library/dsh/.web-url", encoding: .utf8),
-           let u = URL(string: s.trimmingCharacters(in: .whitespacesAndNewlines)) {
-            defaults.set(u.absoluteString, forKey: urlKey)
-            web.load(URLRequest(url: u)); return
+        // 1) 引擎写的带 token 地址（两个位置都试）
+        let candidates = [
+            "/var/mobile/Library/dsh/.web-url",
+            "/var/mobile/Documents/dsh-url.txt",
+        ]
+        for path in candidates {
+            if let s = try? String(contentsOfFile: path, encoding: .utf8) {
+                let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
+                if let u = URL(string: trimmed), u.scheme != nil {
+                    defaults.set(u.absoluteString, forKey: urlKey)
+                    web.load(URLRequest(url: u)); return
+                }
+            }
         }
-        // 2) 其次用已保存地址；3) 都没有就弹框让用户粘
+        // 2) 已保存地址；3) 都没有就弹框让用户粘
         if let s = defaults.string(forKey: urlKey), let u = URL(string: s) {
             web.load(URLRequest(url: u)); return
         }
         askForURL()
+    }
+
+    // 加载失败要说清楚原因，别只留一片灰
+    func webView(_ w: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        showLoadError(error)
+    }
+
+    func webView(_ w: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        showLoadError(error)
+    }
+
+    private func showLoadError(_ error: Error) {
+        let ac = UIAlertController(
+            title: "打不开引擎界面",
+            message: "先确认引擎在跑：sh /var/mobile/Library/dsh/start-engine.sh\n\n\(error.localizedDescription)",
+            preferredStyle: .alert)
+        ac.addAction(UIAlertAction(title: "重试", style: .default) { _ in self.loadEntry() })
+        ac.addAction(UIAlertAction(title: "粘贴地址", style: .default) { _ in self.askForURL() })
+        present(ac, animated: true)
     }
 
     private func askForURL() {
