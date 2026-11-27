@@ -32,8 +32,28 @@ static void print_rss(const char *tag) {
     fflush(stdout);
 }
 
+static int set_limit(int64_t mb) {
+    errno = 0;
+    int rc = msctl(MEMORYSTATUS_CMD_SET_JETSAM_TASK_LIMIT, getpid(), 0, &mb, sizeof(mb));
+    printf("set_jetsam_task_limit(%lldMB) rc=%d errno=%d(%s)\n", (long long)mb, rc, errno, strerror(errno));
+    fflush(stdout);
+    return rc;
+}
+
 int main(int argc, char **argv) {
     printf("pid=%d\n", (int)getpid());
+
+    // memprobe --exec <目标> [参数...]：设上限后 execv 过去。
+    // 用来验证"exec 之后上限是否保留"，最终给 node 套一层。
+    if (argc > 2 && strcmp(argv[1], "--exec") == 0) {
+        const char *env = getenv("DSH_JETSAM_MB");
+        int64_t mb = env ? atoll(env) : 1024;
+        set_limit(mb);
+        fflush(stdout);
+        execv(argv[2], &argv[2]);
+        perror("execv");
+        return 1;
+    }
 
     // 能不能读到自己的 memlimit 属性（结构是私有布局，只用来判断调用是否成功）
     uint64_t props[5] = {0};
