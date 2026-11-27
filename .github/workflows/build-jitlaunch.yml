@@ -27,6 +27,8 @@ jobs:
             -O2 -Wall -Wextra -o out/jitprobe2 launcher/jitprobe2.c
           xcrun -sdk iphoneos clang -target arm64-apple-ios14.0 -isysroot "$SDK" \
             -O2 -Wall -Wextra -o out/memprobe launcher/memprobe.c
+          xcrun -sdk iphoneos clang -target arm64-apple-ios14.0 -isysroot "$SDK" \
+            -O2 -Wall -Wextra -o out/pnpm launcher/pnpm.c
           file out/dsh-jitlaunch out/jitprobe
           vtool -show-build out/jitprobe
 
@@ -46,6 +48,7 @@ jobs:
             out/jitprobe
             out/jitprobe2
             out/memprobe
+            out/pnpm
             out/hello-ios
           if-no-files-found: error
           retention-days: 14
