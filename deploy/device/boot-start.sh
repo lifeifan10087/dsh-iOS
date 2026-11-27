@@ -18,8 +18,17 @@ fi
 # 原生 addon 必须先搬到 /var/jb，否则 dlopen 会被沙箱拦（幂等）
 [ -x /var/mobile/Library/dsh/relocate-addons.sh ] && sh /var/mobile/Library/dsh/relocate-addons.sh >/dev/null 2>&1
 
+# 幂等判断用 pidfile（`ps` 在设备上会截断参数，grep 不可靠；早期版本因此可能重复拉起多个引擎）
+PIDF=/var/mobile/Library/dsh/engine.pid
+if [ -f "$PIDF" ]; then
+  OLD=$(cat "$PIDF" 2>/dev/null)
+  if [ -n "$OLD" ] && kill -0 "$OLD" 2>/dev/null; then
+    echo "already running pid=$OLD"
+    exit 0
+  fi
+fi
 if ps -A -o args 2>/dev/null | grep -q "[d]sh/lib/bin.js web"; then
-  echo "already running"
+  echo "already running (ps match)"
   exit 0
 fi
 
@@ -27,6 +36,7 @@ MARK="=== dsh start $(date +%s) ==="
 echo "$MARK" >>"$LOG"
 nohup "$NODE" --jitless --max-old-space-size=1024 --require "$PRE" --expose-internals \
   --experimental-sqlite "$APP" web --host 127.0.0.1 --port 3080 --no-open >>"$LOG" 2>&1 &
+echo $! > "$PIDF"
 echo "spawned $!"
 
 # 引擎每次启动都会生成新 token，壳（WKWebView）读的是 .web-url，这里把它同步成最新的。
