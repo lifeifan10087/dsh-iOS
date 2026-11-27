@@ -21,8 +21,10 @@ jobs:
           mkdir -p out
           xcrun -sdk iphoneos clang -target arm64-apple-ios14.0 -isysroot "$SDK" \
             -O2 -Wall -Wextra -o out/dsh-jitlaunch launcher/jitlaunch.c
-          file out/dsh-jitlaunch
-          vtool -show-build out/dsh-jitlaunch
+          xcrun -sdk iphoneos clang -target arm64-apple-ios14.0 -isysroot "$SDK" \
+            -O2 -Wall -Wextra -o out/jitprobe launcher/jitprobe.c
+          file out/dsh-jitlaunch out/jitprobe
+          vtool -show-build out/jitprobe
 
       - name: Build a tiny self-test (optional)
         run: |
@@ -37,6 +39,7 @@ jobs:
           name: dsh-jitlaunch
           path: |
             out/dsh-jitlaunch
+            out/jitprobe
             out/hello-ios
           if-no-files-found: error
           retention-days: 14
