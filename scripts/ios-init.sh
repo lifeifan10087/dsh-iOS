@@ -41,12 +41,16 @@ bash "$(dirname "$0")/../shim/apply-shim.sh" "$APP/node_modules"
 mkdir -p "$(dirname "$LAUNCHER")"
 # --jitless 是必须的（越狱机没给 JIT，V8 一分配代码页就 SIGBUS，见 HANDOFF 坑表）；
 # wasm-fake.cjs 让 undici 在"没有 WebAssembly"的 jitless 下也能加载完模块。
-cp "$(dirname "$0")/../shim/wasm-fake.cjs" "$HOME_DIR/wasm-fake.cjs" 2>/dev/null || true
-chmod 644 "$HOME_DIR/wasm-fake.cjs" 2>/dev/null || true
+# 三件套：WebAssembly 占位（让 undici 能加载）+ fetch 替身（jitless 下发不了请求）
+mkdir -p "$HOME_DIR/shim"
+for f in wasm-fake.cjs fetch-http.cjs ios-preload.cjs; do
+  cp "$(dirname "$0")/../shim/$f" "$HOME_DIR/shim/$f" 2>/dev/null || true
+  chmod 644 "$HOME_DIR/shim/$f" 2>/dev/null || true
+done
 cat > "$LAUNCHER" <<EOF
 #!/bin/sh
 export DSH_HOME="$HOME_DIR"
-exec "$NODE_BIN" --jitless --require "$HOME_DIR/wasm-fake.cjs" --expose-internals --max-old-space-size=2048 --experimental-sqlite \\
+exec "$NODE_BIN" --jitless --require "$HOME_DIR/shim/ios-preload.cjs" --expose-internals --max-old-space-size=2048 --experimental-sqlite \\
   "$APP/node_modules/@deepseek-ai/dsh/lib/bin.js" "\$@"
 EOF
 chmod +x "$LAUNCHER"
