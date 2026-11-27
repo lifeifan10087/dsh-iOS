@@ -39,10 +39,14 @@ bash "$(dirname "$0")/../shim/apply-shim.sh" "$APP/node_modules"
 
 # 3) 启动器：--expose-internals 是替身的前提
 mkdir -p "$(dirname "$LAUNCHER")"
+# --jitless 是必须的（越狱机没给 JIT，V8 一分配代码页就 SIGBUS，见 HANDOFF 坑表）；
+# wasm-fake.cjs 让 undici 在"没有 WebAssembly"的 jitless 下也能加载完模块。
+cp "$(dirname "$0")/../shim/wasm-fake.cjs" "$HOME_DIR/wasm-fake.cjs" 2>/dev/null || true
+chmod 644 "$HOME_DIR/wasm-fake.cjs" 2>/dev/null || true
 cat > "$LAUNCHER" <<EOF
 #!/bin/sh
 export DSH_HOME="$HOME_DIR"
-exec "$NODE_BIN" --expose-internals --max-old-space-size=2048 --experimental-sqlite \\
+exec "$NODE_BIN" --jitless --require "$HOME_DIR/wasm-fake.cjs" --expose-internals --max-old-space-size=2048 --experimental-sqlite \\
   "$APP/node_modules/@deepseek-ai/dsh/lib/bin.js" "\$@"
 EOF
 chmod +x "$LAUNCHER"
