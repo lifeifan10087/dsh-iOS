@@ -35,30 +35,14 @@ exec /var/jb/usr/local/lib/dsh/node --jitless --require /var/jb/usr/local/lib/ds
 EOF
 chmod 755 "$STAGE/$JB/usr/local/bin/dsh-ios"
 
-# launchd 常驻
-cat > "$STAGE/$JB/Library/LaunchDaemons/com.dsh.engine.plist" <<'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-  <key>Label</key><string>com.dsh.engine</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/var/jb/usr/local/bin/dsh-ios</string><string>web</string>
-    <string>--host</string><string>127.0.0.1</string>
-    <string>--port</string><string>3080</string>
-    <string>--no-open</string>
-  </array>
-  <key>EnvironmentVariables</key><dict>
-    <key>PATH</key><string>/var/jb/usr/bin:/usr/bin:/bin:/var/jb/usr/sbin:/usr/sbin</string>
-    <key>HOME</key><string>/var/mobile</string>
-  </dict>
-  <key>WorkingDirectory</key><string>/var/mobile/Library/dsh</string>
-  <key>StandardOutPath</key><string>/var/mobile/Library/Logs/dsh-engine.log</string>
-  <key>StandardErrorPath</key><string>/var/mobile/Library/Logs/dsh-engine.log</string>
-  <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
-</dict></plist>
-EOF
+# 开机自启：launchd 作业只负责把引擎 nohup 出去（作业进程本身受 jetsam 限额，dsh 跑不住），
+# 每 120 秒复查一次，挂了就重拉。ExecuteAllowed 是 Procursus launchd 的必需键，缺了直接 EX_CONFIG。
+cp "$KIT/deploy/device/com.dsh.bootstrap.plist" "$STAGE/$JB/Library/LaunchDaemons/com.dsh.bootstrap.plist"
+chmod 644 "$STAGE/$JB/Library/LaunchDaemons/com.dsh.bootstrap.plist"
+
+mkdir -p "$STAGE/var/mobile/Library/dsh"
+cp "$KIT/deploy/device/boot-start.sh" "$STAGE/var/mobile/Library/dsh/boot-start.sh"
+chmod 755 "$STAGE/var/mobile/Library/dsh/boot-start.sh"
 
 # postinst：解依赖、套 JS 替身、加载守护进程、记录 token 地址
 cat > "$STAGE/DEBIAN/postinst" <<'EOF'
@@ -88,10 +72,13 @@ JS
 fi
 chown -R mobile:mobile "$DSH_HOME" 2>/dev/null || true
 if command -v ldid >/dev/null 2>&1; then ldid -S "$APP/node" || true; fi
-launchctl bootout system /var/jb/Library/LaunchDaemons/com.dsh.engine.plist 2>/dev/null || true
-launchctl bootstrap system /var/jb/Library/LaunchDaemons/com.dsh.engine.plist 2>/dev/null || \
-  launchctl load /var/jb/Library/LaunchDaemons/com.dsh.engine.plist || true
-sleep 5
+# 老的 engine 作业（直接跑 node 会被 jetsam 杀）先卸掉
+launchctl unload /var/jb/Library/LaunchDaemons/com.dsh.engine.plist 2>/dev/null || true
+rm -f /var/jb/Library/LaunchDaemons/com.dsh.engine.plist
+chown mobile:mobile /var/mobile/Library/dsh/boot-start.sh 2>/dev/null || true
+launchctl unload /var/jb/Library/LaunchDaemons/com.dsh.bootstrap.plist 2>/dev/null || true
+launchctl load -w -F /var/jb/Library/LaunchDaemons/com.dsh.bootstrap.plist || true
+sleep 20
 URL="$(grep -oE 'http://127\.0\.0\.1:3080/\?token=[A-Za-z0-9_-]+' /var/mobile/Library/Logs/dsh-engine.log 2>/dev/null | tail -1 || true)"
 [ -n "$URL" ] && printf '%s' "$URL" > "$DSH_HOME/web-url.txt"
 # 再放一份到「文件」App 能看到的目录，方便用 Filza 打开
@@ -115,7 +102,8 @@ Depends: firmware (>= 14.0), gzip, ldid
 EOF
 
 chmod 755 "$STAGE" "$STAGE/var" "$STAGE/$APP" "$STAGE/DEBIAN"
-chmod 644 "$STAGE/$JB/Library/LaunchDaemons/com.dsh.engine.plist"
+chmod 644 "$STAGE/$JB/Library/LaunchDaemons/com.dsh.bootstrap.plist"
+chmod 755 "$STAGE/var/mobile/Library/dsh/boot-start.sh"
 OUT_DIR="${OUT_DIR:-out}"; mkdir -p "$OUT_DIR"
 OUT_DEB="$OUT_DIR/dsh-go_${VER}_iphoneos-arm64.deb"
 dpkg-deb -Zgzip -b "$STAGE" "$OUT_DEB" >/dev/null
