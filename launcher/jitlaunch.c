@@ -16,6 +16,7 @@
 // 签名（设备上）：ldid -S<entitlements.plist> dsh-jitlaunch
 
 #include <errno.h>
+#include <fcntl.h>
 #include <signal.h>
 #include <spawn.h>
 #include <stdio.h>
@@ -38,13 +39,23 @@ static const char *JBCTL_PATHS[] = {
 };
 
 static int run_set_debugged(pid_t pid) {
+    char pidbuf[16];
+    snprintf(pidbuf, sizeof(pidbuf), "%d", (int)pid);
     for (int i = 0; JBCTL_PATHS[i]; i++) {
         if (access(JBCTL_PATHS[i], X_OK) != 0) continue;
-        char cmd[512];
-        snprintf(cmd, sizeof(cmd),
-                 "%s proc_set_debugged %d >/dev/null 2>&1", JBCTL_PATHS[i], (int)pid);
-        int rc = system(cmd);
-        if (rc == 0) return 0;
+        // iOS 上 system() 被标为不可用，直接用 posix_spawn 起 jbctl
+        char *args[] = { (char *)JBCTL_PATHS[i], (char *)"proc_set_debugged", pidbuf, NULL };
+        posix_spawn_file_actions_t fa;
+        posix_spawn_file_actions_init(&fa);
+        posix_spawn_file_actions_addopen(&fa, 1, "/dev/null", O_WRONLY, 0);
+        posix_spawn_file_actions_addopen(&fa, 2, "/dev/null", O_WRONLY, 0);
+        pid_t jpid = 0;
+        int rc = posix_spawn(&jpid, JBCTL_PATHS[i], &fa, NULL, args, environ);
+        posix_spawn_file_actions_destroy(&fa);
+        if (rc != 0) continue;
+        int st = 0;
+        while (waitpid(jpid, &st, 0) < 0 && errno == EINTR) {}
+        if (WIFEXITED(st) && WEXITSTATUS(st) == 0) return 0;
     }
     return -1;
 }
