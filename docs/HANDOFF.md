@@ -38,8 +38,11 @@ Fetch 子集（真 ReadableStream 的 body、gzip/deflate/br 解压、redirect f
 3. **模型凭证**：`/var/mobile/Library/dsh/env.sh`（600）里放 `DEEPSEEK_API_KEY`，
    `boot-start.sh` 启动前 source；引擎日志可见 `model listing ... loaded 2 model(s)`。
 
-已知未解：dsh 自带的 bash 工具在设备上会因为**沙箱后端不可用**而失败（模型自己在回复里发现了这点），
-要做真正的 agent 干活还需要给 shell 工具关掉 sandbox 后端（配置项待查）。
+**bash 工具也打通了**（2026-11-27 22:25）：原来失败是因为 iOS 上没有沙箱后端
+（`dsh-sandbox-local` 按平台选 runner 链：linux=[bwrap,landlock]、darwin=[seatbelt]，iOS 一条都没有 → fail closed）。
+不需要改代码：`dsh-bash-sandbox` 在 `sandboxPolicy.mode === "danger-full-access"` 时**直接跳过限制**，
+而 profile 里的 approval 策略本来就是 `DSH_PERMISSION_MODE ?? 'workspace-write'`。
+所以只要 `env.sh` 里加 `DSH_PERMISSION_MODE=danger-full-access`，bash / read / write / glob / web_fetch 全部可用（已实测）。
 
 **常驻也解决了**（2026-11-27 21:15）。关键有两条，缺一不可：
 
@@ -99,6 +102,7 @@ Fetch 子集（真 ReadableStream 的 body、gzip/deflate/br 解压、redirect f
 | launchd 作业一律 `78 EX_CONFIG`（连 `/bin/sleep`） | Procursus launchd 要求 plist 带 `ExecuteAllowed` | 加 `<key>ExecuteAllowed</key><true/>` |
 | 作业能起但立刻 `JETSAM_REASON_MEMORY_PERPROCESSLIMIT` | 作业进程自身带 per-process 限额，dsh 常驻 ~250MB 超了 | 作业改成「nohup 出引擎后自己退出」，孤立的子进程不受限；`StartInterval` 做看门狗 |
 | `ERR_FLOCK_UNSUPPORTED_PLATFORM`（会话持久化失败） | `process.platform === "ios"`，flock 只认 linux/darwin | 预载里把 platform/arch 谎报成 darwin/arm64（darwin 那套 addon 已改成 platform=2） |
+| bash 工具 `SANDBOX_UNAVAILABLE` / 命令失败 | iOS 没有 bwrap/landlock/seatbelt，`dsh-sandbox-local` 的 runner 链为空 → fail closed | `DSH_PERMISSION_MODE=danger-full-access`（此时 `dsh-bash-sandbox` 直接跳过限制，不改代码） |
 | `file system sandbox blocked mmap()` 加载 `.node` | 沙箱只允许从 `/var/jb` 之类的越狱路径映射可执行页 | `deploy/device/relocate-addons.sh` 搬到 `/var/jb/usr/local/lib/dsh/addons/` + 原处符号链接；`trustcache add`/`ldid` 都无效 |
 | `ECONNRESET` / `Error: aborted` 崩进程 | 替身里用 `res.destroy()` 收尾、或 `Readable.toWeb` 时没人接 `res` 的 `error`/`aborted` 事件 | 用 `Readable.toWeb` + `res.on("error"|"aborted", ()=>{})`；跳转时留空的 error 监听（`emit('error')` 无监听会变成 uncaughtException） |
 | 带 token 仍 401 | `/?token=` 是 303 + Set-Cookie，客户端必须带 cookie 再请求 | 替身在同源跳转时把 `set-cookie` 合进 `cookie` 头 |
