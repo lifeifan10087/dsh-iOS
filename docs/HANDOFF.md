@@ -106,6 +106,19 @@ cd /var/mobile/Library/dsh/profiles/web && pnpm add /tmp/dsh-purge.tgz
 
 实测：ACP 里让 agent 调 `purge_status`，返回真实状态（surface: web），工具注册成功。
 
+## IPA 打包（2026-11-28 00:40，卡在 CI 容量）
+
+- 需要 macOS + iOS SDK（Swift 壳），本机/设备都没有
+- GitHub Actions 的 macOS 任务是**容量问题**，不是配额：check-run 注解原文
+  `The job was not acquired by Runner of type hosted even after multiple attempts` +
+  `Due to capacity constraints, jobs targeting macOS arm64 runners may experience longer queue times.`
+  → **换新 GitHub 账号没用**（同一个 hosted 池子）
+- 备选：
+  1. `.github/workflows/build-ipa.yml` 继续重试（池子闲了就能跑）
+  2. `.cirrus.yml`（已改成 build-ipa）：Cirrus CI 对开源仓库免费给 macOS，用 GitHub 登录授权即可，不用新账号
+  3. 任意一台装了 Xcode 的 Mac：`bash shell/build-ipa.sh` → `out/DshGo.ipa`
+  4. `deploy/fetch-ipa.sh` 自动把产物取回并放到 `/sdcard/Download/DSH-Go/DshGo.ipa`
+
 ## 关键坐标
 
 | 项 | 值 |
