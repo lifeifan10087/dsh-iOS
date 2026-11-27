@@ -83,6 +83,29 @@ Fetch 子集（真 ReadableStream 的 body、gzip/deflate/br 解压、redirect f
   直接 cd 进 profile 跑 pnpm，绕开 `dsh plugin` 的 spawn。实测：
   `add-plugin.sh web add is-odd@3.0.1` → 2.8s 装好，`ls` 能看到，`remove` 后干净，lockfile 正常写入。
 
+## dsh-purge 插件（2026-11-27 23:35，能跑）
+
+`zpjio/dsh-purge@1.1.71` 是纯 JS、零依赖、engines>=18，iOS 上能装能跑，已装进
+`profiles/web` 和 `profiles/acp` 的 node_modules，并在两边的 `cordis.patch.yml` 里 insert 了
+`dsh-purge` / `dsh-purge-redteam[-store|-ui]`。
+
+装法（绕开 `dsh plugin`，因为它 spawn 脚本会 EPERM）：
+```sh
+cd /var/mobile/Library/dsh/profiles/web && pnpm add /tmp/dsh-purge.tgz
+```
+
+**必须改两处才能跑**（否则每轮对话直接失败）——`deploy/device/patch-purge-persona.sh` 已封装，幂等：
+1. `node_modules/dsh-purge/cordis.patch.yml`：`personaSuffix: Your working directory is {{cwd}}.` → `""`
+2. `node_modules/dsh-purge/lib/identity.js`：`{{cwd}}` → `the session workspace`
+原因：本机 dsh 只注册了 `{{provider}}`/`{{model}}` 两个提示词变量，`{{cwd}}` 会报
+`unknown prompt variable "{{cwd}}" in section "deployment:persona-suffix"`。
+> pnpm 重装插件会覆盖这两处，重装后再跑一次脚本。
+
+另外：插件自带的 patch 里那条「`- id: dsh-purge` + `inject:`」是**改已有条目**，
+本机 profile 没有该条目 → `patch: entry "dsh-purge" not found`，要删掉，只保留 `insert:` 里的定义。
+
+实测：ACP 里让 agent 调 `purge_status`，返回真实状态（surface: web），工具注册成功。
+
 ## 关键坐标
 
 | 项 | 值 |
