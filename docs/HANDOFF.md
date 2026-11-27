@@ -4,8 +4,13 @@
 
 ## 一句话状态
 
-iOS 版 Node 已经能编出来并在设备上运行（带 `--jitless`），但**版本是 22.9，跑不了 dsh**；
-正在编 **Node 22.20（已移植 iOS 补丁 + 打开 ICU）**，编好后替换即可验收。
+**Node 22.20 的 iOS 包已经编出来了并通过产物校验**（run `44999614926` success，产物已拉到
+`out/node-ios-patched`，platform=2 / minos 14.0 / 带 ICU / 带版本串 v22.20.0），一键 deb 也打好了
+（`out/dsh-go_0.2.3_iphoneos-arm64.deb`，216MB，已复制到手机 `/sdcard/Download/DSH-Go/`）。
+
+**卡在最后一步**：手机 `192.168.10.229` 已不在线，网段内只探到 `192.168.10.230`
+（62078 lockdown 开着 = 是台 iOS 设备，但 22 端口 refused，说明 sshd/越狱没起来）。
+设备侧第 3–5 步（替换 node、四条验收、装 ios-mcp）等 SSH 恢复，或直接走 deb 装。
 
 ## 关键坐标
 
@@ -14,8 +19,10 @@ iOS 版 Node 已经能编出来并在设备上运行（带 `--jitless`），但*
 | 代码仓库 | `lifeifan10087/dsh-iOS`（GitHub，默认分支 main） |
 | 需要凭证 | classic PAT，勾 `repo` + `workflow`（每次新会话由用户重新提供） |
 | 构建入口 | `build/build-node-ios.sh`，workflow `.github/workflows/build-node-ios.yml` |
-| 最近一次构建 | run `44999614926`（v22.20.0 + tarball 输入，已修 CoreFoundation 链接，进行中） |
-| 上一次构建 | run `44992516975` → failure：**只差最后链接**（见坑表第 8 条） |
+| 最近一次构建 | run `44999614926` → **success**（v22.20.0 + ICU，产物 226.8MB kit） |
+| 上一次构建 | run `44992516975` → failure：只差最后链接（见坑表 CoreFoundation 那条） |
+| 产物 | `out/node-ios-patched`（110MB，platform=2）、`out/node_modules.tgz`（183MB） |
+| 一键包 | `out/dsh-go_0.2.3_iphoneos-arm64.deb`；手机侧 `/sdcard/Download/DSH-Go/` |
 | 设备 | `mobile@192.168.10.229`，密码由用户提供；`echo <pw> \| sudo -S -p ""` 可提权 |
 | 设备已装 | `gzip`、`ldid`、`com.dsh.go`(0.2.2，内含 22.9 版 node) |
 | 待装 | `/tmp/ios-mcp.deb`（23.6MB，已下载，未安装） |
@@ -47,15 +54,22 @@ iOS 版 Node 已经能编出来并在设备上运行（带 `--jitless`），但*
 
 ## 阻塞项（2026-11-22 记）
 
-- 手机和本机不在同一网段：本机 `10.111.33.36`，手机 `192.168.10.229`，22/62078 全超时。
-  第 3、4、5 步要等设备回到 `192.168.10.x` 局域网，或先把手机 IP 探出来（`deploy/discover-iphone.mjs`）。
+- **设备 SSH 不通**：`192.168.10.229` 完全超时（旧地址/已关机）；`192.168.10.230` 的 62078
+  lockdown 开着、22 端口 refused → 是那台 iPhone，但 sshd 没起来（越狱插件没开或重启后未激活）。
+  探段命令：`node deploy/discover-iphone.mjs 192.168.10`（或 `node /tmp/scan.mjs 192.168.10` 扫 22/62078/3080）。
+- 不依赖 SSH 的路子：把 `out/dsh-go_0.2.3_iphoneos-arm64.deb` 拷进手机，Filza/Sileo 点装，
+  postinst 自动起引擎并把 token 写到 `/var/mobile/Documents/dsh-url.txt`。
+- 本机出口网段会漂：2026-11-22 是 `10.111.33.x`（跟手机不同网段），11-27 回到 `192.168.10.216`。
 
 ## 下一步（按顺序）
 
-1. 盯 `44999614926` 构建；成功后 `node deploy/fetch-artifact.mjs lifeifan10087/dsh-iOS`
-2. 校验产物：`LC_BUILD_VERSION platform=2`、`--version` ≥22.20、`\p{ID_Continue}` 可用
-3. 替换设备 node：`SSHPASS=xxx DEVICE=mobile@192.168.10.229 bash deploy/swap-node.sh out/node-ios-patched`
-4. 验收四条：`process.platform=darwin`、`node:sqlite`、`127.0.0.1:3080` 返回 401、token 能打开界面
+1. ~~盯构建 + 取产物~~ 已完成：`node deploy/fetch-artifact.mjs lifeifan10087/dsh-iOS dsh-ios-kit 44999614926`
+2. ~~校验产物~~ 已完成：`python3 deploy/verify-node-ios.py out/node-ios-patched 22.20` → PASS
+   （platform=2 / minos 14.0 / sdk 18.5 / 已签名 / 版本串 v22.20.0；三个原生 addon 也已验为 platform=2）
+3. 替换设备 node（需 SSH）：`source .secrets.env && bash deploy/swap-node.sh out/node-ios-patched`
+   （自动探测 node 路径、留 `node.bak-<时间戳>`、重写启动器带 `--jitless`、顺带跑验收）
+4. 验收四条：`bash deploy/accept-device.sh` → 探针 + JSON 判定：
+   `process.platform=darwin`、`node:sqlite`、`127.0.0.1:3080` 无 token 401、带 token 200
 5. 手机操控：装 `/tmp/ios-mcp.deb` → `curl http://127.0.0.1:8090/health` → 在
    `/var/mobile/Library/dsh/profiles/web/cordis.patch.yml` 追加：
    ```yaml
