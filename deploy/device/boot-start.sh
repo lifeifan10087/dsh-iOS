@@ -14,7 +14,25 @@ if ps -A -o args 2>/dev/null | grep -q "[d]sh/lib/bin.js web"; then
   exit 0
 fi
 
+MARK="=== dsh start $(date +%s) ==="
+echo "$MARK" >>"$LOG"
 nohup "$NODE" --jitless --max-old-space-size=1024 --require "$PRE" --expose-internals \
   --experimental-sqlite "$APP" web --host 127.0.0.1 --port 3080 --no-open >>"$LOG" 2>&1 &
 echo "spawned $!"
+
+# 引擎每次启动都会生成新 token，壳（WKWebView）读的是 .web-url，这里把它同步成最新的。
+# 放到后台跑，作业自己马上退出（作业进程不能长时间活着，见文件头说明）。
+(
+  i=0
+  while [ $i -lt 60 ]; do
+    # 只看本次启动标记之后的部分，否则会把上一次的旧 token 写进 .web-url
+    U="$(sed -n "\|$MARK|,\$p" "$LOG" 2>/dev/null | grep -oE 'http://127\.0\.0\.1:3080/\?token=[A-Za-z0-9_-]+' | tail -1)"
+    if [ -n "$U" ]; then
+      printf '%s' "$U" > /var/mobile/Library/dsh/.web-url
+      printf '%s\n' "$U" > /var/mobile/Documents/dsh-url.txt 2>/dev/null || true
+      break
+    fi
+    i=$((i+1)); sleep 2
+  done
+) &
 exit 0
