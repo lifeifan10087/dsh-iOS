@@ -1,0 +1,50 @@
+name: build-ipa
+
+# 把 shell/main.swift 编成可安装的 DshGo.ipa（不需要 Theos）
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ipa:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build DshGo.app
+        run: |
+          set -euo pipefail
+          SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+          echo "SDK=$SDK"
+          rm -rf out Payload; mkdir -p out Payload/DshGo.app
+          xcrun -sdk iphoneos swiftc -target arm64-apple-ios14.0 -O \
+            -sdk "$SDK" -framework UIKit -framework WebKit \
+            -o Payload/DshGo.app/DshGo shell/main.swift
+          cp shell/Info.plist Payload/DshGo.app/Info.plist
+          chmod 755 Payload/DshGo.app/DshGo
+          file Payload/DshGo.app/DshGo
+          vtool -show-build Payload/DshGo.app/DshGo || true
+
+      - name: Sign (ldid, ad-hoc + entitlements)
+        run: |
+          set -euo pipefail
+          brew install ldid >/dev/null 2>&1 || true
+          ldid -Sshell/entitlements-ipa.plist Payload/DshGo.app/DshGo || echo "ldid 失败，保留未签名"
+          ldid -e Payload/DshGo.app/DshGo | head -20 || true
+
+      - name: Package IPA
+        run: |
+          set -euo pipefail
+          rm -f out/DshGo.ipa
+          zip -qry out/DshGo.ipa Payload
+          ls -lh out/DshGo.ipa
+          unzip -l out/DshGo.ipa | head -10
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dshgo-ipa
+          path: out/DshGo.ipa
+          if-no-files-found: error
+          retention-days: 14
