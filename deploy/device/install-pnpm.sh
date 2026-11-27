@@ -1,22 +1,27 @@
-#!/bin/sh
-# 在设备上装一份纯 JS 的 pnpm（node 是 --without-npm 编的，没有 npm/npx，
-# 但 dsh plugin 把参数转发给 pnpm，所以只要有 pnpm 就能装插件）。
+#!/var/jb/bin/sh
+# 在设备上装 pnpm（纯 JS）+ 原生启动器。
+#
+# 为什么必须是原生启动器：
+#   · 设备上没有 /bin/sh（只有 /var/jb/bin/sh）
+#   · 更关键：node 的 child_process.spawn 执行**脚本**会返回 EPERM（iOS posix_spawn 限制），
+#     而 dsh 的插件管理用 execa spawn("pnpm")，脚本包装器根本起不来
+#   所以 pnpm 这个命令得是 Mach-O（launcher/pnpm.c 编出来的），内部 execv 到 node。
+#
+# 用法: install-pnpm.sh <pnpm-版本包.tgz> <pnpm-原生启动器>
 set -e
 JB=/var/jb
 DEST="$JB/usr/local/lib/dsh/pnpm"
-SRC="${1:-/tmp/pnpm.tgz}"
+TGZ="${1:-/tmp/pnpm.tgz}"
+BIN="${2:-/tmp/pnpm-launcher}"
 
-[ -f "$SRC" ] || { echo "找不到 $SRC"; exit 1; }
+[ -f "$TGZ" ] || { echo "找不到 $TGZ"; exit 1; }
+[ -f "$BIN" ] || { echo "找不到原生启动器 $BIN"; exit 1; }
+
 rm -rf "$DEST"; mkdir -p "$DEST"
-tar -C "$DEST" -xzf "$SRC" --strip-components=1
+tar -C "$DEST" -xzf "$TGZ" --strip-components=1
 chmod -R a+rX "$DEST"
 
-cat > "$JB/usr/local/bin/pnpm" <<'EOF'
-#!/bin/sh
-# 用设备上的 iOS 版 node 跑 pnpm；带 preload（平台谎报 darwin + fetch 替身）
-exec /var/jb/usr/local/lib/dsh/node --jitless \
-  --require /var/mobile/Library/dsh/shim/ios-preload.cjs \
-  /var/jb/usr/local/lib/dsh/pnpm/bin/pnpm.cjs "$@"
-EOF
-chmod 755 "$JB/usr/local/bin/pnpm"
-echo "pnpm 已装: $("$JB/usr/local/bin/pnpm" --version 2>&1 | tail -1)"
+install -m 755 "$BIN" "$JB/usr/bin/pnpm"
+ldid -S "$JB/usr/bin/pnpm" 2>/dev/null || true
+echo "pnpm 启动器: $(ls -l "$JB/usr/bin/pnpm" | sed 's/.* \(.*\)/\1/')"
+echo "版本: $("$JB/usr/bin/pnpm" --version 2>&1 | tail -1)"
