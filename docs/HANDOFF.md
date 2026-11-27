@@ -24,6 +24,23 @@ Fetch 子集（真 ReadableStream 的 body、gzip/deflate/br 解压、redirect f
 跳转时带 cookie、AbortSignal），设备实测：https 拉到 180KB 正常、SSE 逐块读正常、
 `/?token=` → 303 → 带 cookie → **200 + 40102 字节 HTML**。
 
+**真跑通了一轮对话**（2026-11-27 22:07）：用 ACP（JSON-RPC over stdio，`dsh --profile acp`）在设备上
+`initialize` → `session/new` → `session/prompt`，模型答完 `stopReason: end_turn`，
+收到 **4279 字符**正文，首字 22s、总 30.8s。中途修了三处：
+
+1. **`process.platform` 谎报 darwin**：设备上报 `ios`，`@deepseek-ai/node-addon-system` 的 flock
+   只认 linux/darwin，直接 `ERR_FLOCK_UNSUPPORTED_PLATFORM` → 会话持久化失败。已在
+   `shim/ios-preload.cjs` 里统一改成 darwin/arm64。
+2. **原生 addon 路径沙箱**：从 `/var/mobile/Library/dsh/app/node_modules/*.node` dlopen 会报
+   `file system sandbox blocked mmap()`；从 `/var/jb/...` 加载正常。解法：
+   `deploy/device/relocate-addons.sh` 把 12 个 `.node` 搬到 `/var/jb/usr/local/lib/dsh/addons/`，
+   原位置留符号链接（幂等）。`jbctl trustcache add` 和 `ldid` 重签都**不解决**这个。
+3. **模型凭证**：`/var/mobile/Library/dsh/env.sh`（600）里放 `DEEPSEEK_API_KEY`，
+   `boot-start.sh` 启动前 source；引擎日志可见 `model listing ... loaded 2 model(s)`。
+
+已知未解：dsh 自带的 bash 工具在设备上会因为**沙箱后端不可用**而失败（模型自己在回复里发现了这点），
+要做真正的 agent 干活还需要给 shell 工具关掉 sandbox 后端（配置项待查）。
+
 **常驻也解决了**（2026-11-27 21:15）。关键有两条，缺一不可：
 
 1. **`ExecuteAllowed`**：Procursus 的 launchd 对 `/var/jb` 下的作业要求 plist 里带
@@ -81,6 +98,8 @@ Fetch 子集（真 ReadableStream 的 body、gzip/deflate/br 解压、redirect f
 | `_CFRelease/_CFTimeZoneCopyDefault undefined`（链接 `cctest`/`embedtest`/`node`） | abseil 的 cctz `time_zone_lookup.cc` 在 `__APPLE__` 下走 CoreFoundation 分支；node 的 gyp 只在 `OS=="mac"` 分支才自动带 `-framework CoreFoundation`，我们走 iOS 目标 | `build-node-ios.sh` 的 `ios-cc`/`ios-cxx` 包装器：**只在链接（无 `-c`）时**追加 `-framework CoreFoundation -framework CoreServices -liconv` |
 | launchd 作业一律 `78 EX_CONFIG`（连 `/bin/sleep`） | Procursus launchd 要求 plist 带 `ExecuteAllowed` | 加 `<key>ExecuteAllowed</key><true/>` |
 | 作业能起但立刻 `JETSAM_REASON_MEMORY_PERPROCESSLIMIT` | 作业进程自身带 per-process 限额，dsh 常驻 ~250MB 超了 | 作业改成「nohup 出引擎后自己退出」，孤立的子进程不受限；`StartInterval` 做看门狗 |
+| `ERR_FLOCK_UNSUPPORTED_PLATFORM`（会话持久化失败） | `process.platform === "ios"`，flock 只认 linux/darwin | 预载里把 platform/arch 谎报成 darwin/arm64（darwin 那套 addon 已改成 platform=2） |
+| `file system sandbox blocked mmap()` 加载 `.node` | 沙箱只允许从 `/var/jb` 之类的越狱路径映射可执行页 | `deploy/device/relocate-addons.sh` 搬到 `/var/jb/usr/local/lib/dsh/addons/` + 原处符号链接；`trustcache add`/`ldid` 都无效 |
 | `ECONNRESET` / `Error: aborted` 崩进程 | 替身里用 `res.destroy()` 收尾、或 `Readable.toWeb` 时没人接 `res` 的 `error`/`aborted` 事件 | 用 `Readable.toWeb` + `res.on("error"|"aborted", ()=>{})`；跳转时留空的 error 监听（`emit('error')` 无监听会变成 uncaughtException） |
 | 带 token 仍 401 | `/?token=` 是 303 + Set-Cookie，客户端必须带 cookie 再请求 | 替身在同源跳转时把 `set-cookie` 合进 `cookie` 头 |
 | `Bus error: 10`（不带 `--jitless`） | 越狱机没有 JIT 授权；`jbctl proc_set_debugged`（CS_DEBUGGED）和 `jbctl trustcache add` **都不管用**，jitprobe 实测 `MAP_JIT` 返回 EINVAL；崩溃报告显示 `KERN_PROTECTION_FAILURE` 在 `Builtins_InterpreterEntryTrampoline` | 只能 `--jitless`（保留 `launcher/jitlaunch.c` 作为记录，不再依赖它） |
@@ -105,8 +124,8 @@ Fetch 子集（真 ReadableStream 的 body、gzip/deflate/br 解压、redirect f
 1. ~~常驻~~ 已解决（见「一句话状态」）。**待验证**：重启设备后是否自动起来 —— 这设备是半绑定越狱，
    重启后要先在越狱 App 里重新激活，launchd 才会加载 `/var/jb/Library/LaunchDaemons`；届时顺带确认
    引擎自动上线（`com.dsh.bootstrap` 的 `RunAtLoad`）。
-2. **模型调用实测**：fetch 替身已通（https/SSE 都验过），下一步在引擎里配一个模型 key，跑一轮真实对话，
-   看 SSE 解析、超时、abort 是否符合预期。
+2. ~~模型调用实测~~ 已完成（ACP 跑通一轮，见上）。下一步：**修 dsh 的 bash 工具**（沙箱后端在 iOS 不可用），
+   让 agent 真能执行命令；顺带看长上下文（1M）下的内存表现。
 3. 装 ios-mcp（`/tmp/ios-mcp.deb` 重启后已清空，需重下）→ `cordis.patch.yml` 接 `mcp-ios`。
 4. 一把梭脚本 `deploy/after-build.sh` 里 deb 版本号还是 0.2.2，改成从产物读。
 
