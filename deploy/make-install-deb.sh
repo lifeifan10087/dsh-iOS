@@ -21,13 +21,14 @@ mkdir -p "$STAGE/$APP" "$STAGE/$JB/usr/local/bin" "$STAGE/$JB/Library/LaunchDaem
 chmod 755 "$STAGE/$JB" "$STAGE/$JB/usr" "$STAGE/$JB/usr/local" "$STAGE/$JB/usr/local/lib" "$STAGE/$JB/usr/local/bin" "$STAGE/$JB/Library" "$STAGE/$JB/Library/LaunchDaemons"
 cp "$NODE_BIN" "$STAGE/$APP/node"; chmod 755 "$STAGE/$APP/node"
 cp "$MODS" "$STAGE/$APP/node_modules.tgz"; chmod 644 "$STAGE/$APP/node_modules.tgz"
-cp "$KIT/shim/wasm-fake.cjs" "$STAGE/$APP/wasm-fake.cjs"; chmod 644 "$STAGE/$APP/wasm-fake.cjs"
+mkdir -p "$STAGE/$APP/shim"
+for f in wasm-fake.cjs fetch-http.cjs ios-preload.cjs; do cp "$KIT/shim/$f" "$STAGE/$APP/shim/$f"; chmod 644 "$STAGE/$APP/shim/$f"; done
 
 # 启动器（--jitless：越狱机没给 JIT 授权时 node 会 SIGBUS，见 HANDOFF 坑表）
 cat > "$STAGE/$JB/usr/local/bin/dsh-ios" <<'EOF'
 #!/bin/sh
 export DSH_HOME=/var/mobile/Library/dsh
-exec /var/jb/usr/local/lib/dsh/node --jitless --require /var/jb/usr/local/lib/dsh/wasm-fake.cjs \
+exec /var/jb/usr/local/lib/dsh/node --jitless --require /var/jb/usr/local/lib/dsh/shim/ios-preload.cjs \
   --expose-internals --experimental-sqlite \
   --max-old-space-size=2048 \
   /var/mobile/Library/dsh/app/node_modules/@deepseek-ai/dsh/lib/bin.js "$@"
