@@ -9,7 +9,8 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 DEVICE="${DEVICE:-${IPHONE_USER:-mobile}@${IPHONE_IP:-192.168.10.229}}"
 PORT="${PORT:-22}"
 SSHOPT=(-p "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-        -o LogLevel=ERROR -o ConnectTimeout=12)
+        -o LogLevel=ERROR -o ConnectTimeout=12
+        -o PreferredAuthentications=password -o PubkeyAuthentication=no)
 if [ -n "${SSHPASS:-}" ]; then
   S()   { sshpass -e ssh "${SSHOPT[@]}" "$DEVICE" "$@"; }
   SCP() { sshpass -e scp "${SSHOPT[@]/#-p/-P}" "$@"; }
@@ -50,7 +51,7 @@ S "[ -x '$NODE' ]" 2>/dev/null && ok "node: $NODE" || { no "node 不存在: $NOD
 echo "  · 越狱前缀: ${JB:-/（rootful）}  启动器: $LAUNCHER"
 
 echo "== 1) 重启引擎"
-S "echo \$SSHPASS | sudo -S -p '' launchctl kickstart -k system/com.dsh.engine" >/dev/null 2>&1 \
+printf '%s\n' "${SSHPASS:-}" | S "sudo -S -p '' launchctl kickstart -k system/com.dsh.engine" >/dev/null 2>&1 \
   && echo "  · kickstart 已发出" || echo "  · kickstart 失败（引擎可能没装）"
 sleep 6
 
@@ -58,7 +59,8 @@ echo "== 2) 上传探针并执行"
 SCP "$HERE/accept-device.mjs" "$DEVICE:/tmp/dsh-accept.mjs" >/dev/null 2>&1 || { no "探针上传失败"; exit 1; }
 URL="$(S "cat $HOME_DIR/.web-url 2>/dev/null || grep -oE 'http://127\\.0\\.0\\.1:3080/\\?token=[A-Za-z0-9_-]+' $LOG 2>/dev/null | tail -1" | tr -d '\r' | tail -1)"
 [ -n "$URL" ] && echo "  · 拿到 token 地址（长度 ${#URL}）" || echo "  · 没找到 token 地址"
-RAW="$(S "echo \$SSHPASS | sudo -S -p '' env DSH_URL='$URL' '$NODE' --jitless --experimental-sqlite /tmp/dsh-accept.mjs" 2>/dev/null | tr -d '\r' | tail -1)"
+# 探针自己 import node:http，会触发 undici → 必须同样预载 wasm 替身
+RAW="$(printf '%s\n' "${SSHPASS:-}" | S "sudo -S -p '' env DSH_URL='$URL' '$NODE' --jitless --require /var/mobile/Library/dsh/wasm-fake.cjs --experimental-sqlite /tmp/dsh-accept.mjs" 2>/dev/null | tr -d '\r' | tail -1)"
 echo "  · 原始输出: ${RAW:0:400}"
 
 python3 - "$RAW" <<'PY'
