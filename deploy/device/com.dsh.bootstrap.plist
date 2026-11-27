@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.dsh.bootstrap</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/var/jb/bin/sh</string>
+    <string>/var/mobile/Library/dsh/boot-start.sh</string>
+  </array>
+  <!-- Procursus 的 launchd 要求：没有这个键，启动作业直接 78 EX_CONFIG -->
+  <key>ExecuteAllowed</key><true/>
+  <key>RunAtLoad</key><true/>
+  <!-- 每 120 秒复查一次，引擎挂了就重新拉起来（boot-start.sh 幂等） -->
+  <key>StartInterval</key><integer>120</integer>
+  <key>EnvironmentVariables</key><dict>
+    <key>PATH</key><string>/var/jb/usr/bin:/var/jb/bin:/usr/bin:/bin</string>
+    <key>HOME</key><string>/var/mobile</string>
+    <key>DSH_HOME</key><string>/var/mobile/Library/dsh</string>
+  </dict>
+  <key>StandardOutPath</key><string>/var/mobile/Library/Logs/dsh-boot.log</string>
+  <key>StandardErrorPath</key><string>/var/mobile/Library/Logs/dsh-boot.log</string>
+</dict></plist>
