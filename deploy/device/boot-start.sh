@@ -54,6 +54,13 @@ PATCHARG=""
 nohup "$NODE" --jitless --max-old-space-size=1024 --require "$PRE" --expose-internals \
   --experimental-sqlite "$APP" --profile web $PATCHARG --host 127.0.0.1 --port 3080 --no-open >>"$LOG" 2>&1 &
 echo $! > "$PIDF"
+
+# 本地反向代理：固定 127.0.0.1:3081，替宿主 App 跟引擎换 cookie（token 每次启动都变）
+PROXY=/var/jb/usr/local/lib/dsh/mcp/auth-proxy.mjs
+if [ -f "$PROXY" ]; then
+  ps -A -o args 2>/dev/null | grep -q "[a]uth-proxy.mjs" || \
+    nohup "$NODE" --jitless --require "$PRE" "$PROXY" > /var/mobile/Library/dsh/proxy.log 2>&1 &
+fi
 echo "spawned $!"
 
 # 引擎每次启动都会生成新 token，壳（WKWebView）读的是 .web-url，这里把它同步成最新的。
@@ -66,6 +73,16 @@ echo "spawned $!"
     if [ -n "$U" ]; then
       printf '%s' "$U" > /var/mobile/Library/dsh/.web-url
       printf '%s\n' "$U" > /var/mobile/Documents/dsh-url.txt 2>/dev/null || true
+      # TrollStore 装的宿主 App 是沙盒的，读不到上面两个路径 —— 直接把 token 写进它的
+      # 数据容器（按 bundle id 找），这样重开 App 就能自己跟上新 token。
+      for meta in /var/mobile/Containers/Data/Application/*/.com.apple.mobile_container_manager.metadata.plist; do
+        [ -f "$meta" ] || continue
+        grep -q 'dsh.go.shell' "$meta" 2>/dev/null || continue
+        d=$(dirname "$meta")
+        mkdir -p "$d/Documents" 2>/dev/null
+        printf '%s\n' "$U" > "$d/Documents/dsh-url.txt" 2>/dev/null && \
+          chown mobile:mobile "$d/Documents/dsh-url.txt" 2>/dev/null
+      done
       break
     fi
     i=$((i+1)); sleep 2
