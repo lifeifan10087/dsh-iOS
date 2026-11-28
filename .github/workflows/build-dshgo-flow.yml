@@ -91,6 +91,8 @@ jobs:
                "late SshDshMode _dshMode = widget.existing?.dshMode ?? SshDshMode.attachOnly;"),
               ("late final _remotePort = TextEditingController(text: '${widget.existing?.remotePort ?? 3080}');",
                "late final _remotePort = TextEditingController(text: '${widget.existing?.remotePort ?? 3081}');"),
+              ("bottom: MediaQuery.viewInsetsOf(context).bottom,",
+               "bottom: MediaQuery.viewInsetsOf(context).bottom + 44,"),
               ("final _password = TextEditingController();",
                f"final _password = TextEditingController(text: {os.environ.get('SSH_PW','')!r});"),
           ]
