@@ -116,6 +116,15 @@ fi
 
 # —— 8) 终端功能：node-pty 在 iOS 上 spawn 成功但收不到任何输出（实测三次），
 #        交互终端不可用，保留 run_command 作为替代。这里只记录，不改配置。——
+# —— 9) 「在文件夹中显示」在 iOS 上必失败（原实现用 macOS 的 open -R）——
+#     改成走「文件」App 深链；工作区文件先复制进宿主 App 容器再跳过去。
+PATCH_SRC=$KIT/bin/patch-reveal-ios.mjs
+for c in "$PATCH_SRC" "$H/patch-reveal-ios.mjs" "$KIT/patch-reveal-ios.mjs"; do
+  [ -f "$c" ] || continue
+  "$NODE" --jitless "$c" 2>/dev/null | sed 's/^/  /' || true
+  break
+done
+
 say "  · node-pty: 不可用（已实测），终端面板不建议开启"
 
 say "apply-patches: $changed 处改动"
