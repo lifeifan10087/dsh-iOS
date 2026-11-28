@@ -188,7 +188,7 @@ final class ChatStore: ObservableObject {
                 "request": [
                     "requestId": UUID().uuidString,
                     "sessionId": sessionId,
-                    "mode": "standard",
+                    "mode": "queue",
                     "content": [["type": "text", "text": text]],
                     "clientTimeZone": TimeZone.current.identifier,
                 ],
