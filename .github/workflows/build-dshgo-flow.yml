@@ -134,6 +134,18 @@ jobs:
           else:
               print('WARN: RelayCredit 页脚未匹配')
 
+          # 4) 把底层 socket 的真实原因显示到界面上（便于诊断「没有响应」）
+          f4 = pathlib.Path('lib/remote/ssh/ssh_transport.dart')
+          s4 = f4.read_text()
+          old4 = "      appL10n.remoteErrSshAddressUnresponsive(where),"
+          new4 = "      '${appL10n.remoteErrSshAddressUnresponsive(where)} [$os]',"
+          if old4 in s4:
+              s4 = s4.replace(old4, new4, 1)
+              f4.write_text(s4)
+              print('ssh_transport: 已把 os 错误拼进提示')
+          else:
+              print('WARN: ssh_transport 未匹配')
+
           # 3) 版本号自增，保证 TrollStore 一定视为升级
           pub = pathlib.Path('pubspec.yaml')
           t = pub.read_text()
