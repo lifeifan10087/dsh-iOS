@@ -1,11 +1,15 @@
 import UIKit
+import SwiftUI
 import SafariServices
 
-// DSH Go 壳：不再自建 WKWebView（在这台越狱机上内容层不出画），
-// 改用 SFSafariViewController —— 页面跑在系统的 SafariViewService 里，
-// 渲染通道和 Safari 一致，界面仍然嵌在本 App 内。
+// DSH Go 原生客户端（iPad/iPhone 原生 SwiftUI 界面，直接吃引擎的 typert RPC）
+// 认证交给本地代理（127.0.0.1:3081，它自己跟引擎换 cookie），所以这里不需要处理 token。
 
-// 全局日志：Documents/dsh-app.log + /tmp（沙盒外也能看）
+let kBase = URL(string: "http://127.0.0.1:3081")!
+let kWebFallback = URL(string: "http://127.0.0.1:3081/")!
+
+// MARK: - 日志
+
 func dshlog(_ msg: String) {
     let line = "[\(Int(Date().timeIntervalSince1970))] \(msg)\n"
     let data = line.data(using: .utf8)!
@@ -14,197 +18,364 @@ func dshlog(_ msg: String) {
         if let h = try? FileHandle(forWritingTo: url) { h.seekToEndOfFile(); h.write(data); try? h.close() }
         else { try? data.write(to: url) }
     }
-    if let h = try? FileHandle(forWritingTo: URL(fileURLWithPath: "/tmp/dsh-go-shell.log")) {
-        h.seekToEndOfFile(); h.write(data); try? h.close()
-    } else { try? data.write(to: URL(fileURLWithPath: "/tmp/dsh-go-shell.log")) }
 }
 
-final class ShellViewController: UIViewController, UITextFieldDelegate {
-    private let defaults = UserDefaults.standard
-    private let urlKey = "dsh.web.url"
-    /// 本地反向代理（auth-proxy.mjs）的固定地址：它自己去引擎换 cookie，
-    /// 所以这个地址永远有效 —— 引擎重启、token 变化都不用重新配对。
-    private let proxyURL = "http://127.0.0.1:3081/"
-    private var currentToken = ""
-    private var safariVC: SFSafariViewController?
-    private var field: UITextField?
-    private var opened = false
+// MARK: - RPC
 
-    private var urlCandidates: [String] {
-        var list: [String] = []
-        if let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
-            list.append(docs.appendingPathComponent("dsh-url.txt").path)
+struct RPCError: LocalizedError {
+    let code: String
+    let message: String
+    var errorDescription: String? { "\(code): \(message)" }
+}
+
+actor RPC {
+    static let shared = RPC()
+    private var seq = 0
+
+    func call(_ method: String, args: [String: Any]) async throws -> [String: Any] {
+        seq += 1
+        let body: [String: Any] = [
+            "type": "client-request",
+            "rpcId": "ios-\(seq)-\(Int(Date().timeIntervalSince1970))",
+            "method": method,
+            "payload": ["args": args],
+        ]
+        var req = URLRequest(url: kBase.appendingPathComponent("api/\(method)"))
+        req.httpMethod = "POST"
+        req.timeoutInterval = 30
+        req.setValue("application/json", forHTTPHeaderField: "content-type")
+        req.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        guard let http = resp as? HTTPURLResponse, http.statusCode == 200 else {
+            throw RPCError(code: "http", message: "状态码 \((resp as? HTTPURLResponse)?.statusCode ?? -1)")
         }
-        list.append("/var/mobile/Library/dsh/.web-url")
-        list.append("/var/mobile/Documents/dsh-url.txt")
-        return list
-    }
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        view.backgroundColor = .systemBackground
-        dshlog("viewDidLoad")
-    }
-
-    override func viewDidAppear(_ animated: Bool) {
-        super.viewDidAppear(animated)
-        if !opened {
-            opened = true
-            // 优先走本地代理（127.0.0.1:3081）：端口不同 = 独立 origin，
-            // App 有自己的前端存储，不会继承 Safari 里那些旧会话；代理还会自己换 cookie。
-            // 代理不在时退回容器里的 token URL（boot-start 会持续刷新）。
-            if probeProxy() { open(URL(string: proxyURL)!); return }
-            if let u = resolveURL() { open(u); return } else {
-                showForm("没找到引擎地址。先在手机上跑：\nsh /var/mobile/Library/dsh/start-engine.sh\n然后把带 token 的地址粘进来：")
-                return
-            }
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let result = json["result"] as? [String: Any] else {
+            throw RPCError(code: "parse", message: String(data: data, encoding: .utf8)?.prefix(120).description ?? "")
         }
-        maybeReloadForNewToken()
-    }
-
-    /// 引擎重启后 token 会变（dsh 每次启动随机生成）。回到前台时比对 .web-url，
-    /// 变了就静默重开，省掉“手动重新配对”这一步。
-    private func maybeReloadForNewToken() {
-        guard let fresh = tokenURL(), fresh != currentToken else { return }
-        dshlog("token changed -> reload")
-        currentToken = fresh
-        defaults.set(fresh, forKey: urlKey)
-        safariVC?.dismiss(animated: false) { [weak self] in
-            guard let self, let u = URL(string: fresh) else { return }
-            self.open(u)
+        if (result["ok"] as? Bool) == true {
+            return (result["value"] as? [String: Any]) ?? [:]
         }
-    }
-
-    /// 探一下本地代理是否在跑（2 秒超时）。在跑就用固定地址。
-    private func probeProxy() -> Bool {
-        guard let u = URL(string: proxyURL) else { return false }
-        var req = URLRequest(url: u)
-        req.timeoutInterval = 2
-        let sem = DispatchSemaphore(value: 0)
-        var ok = false
-        URLSession.shared.dataTask(with: req) { _, resp, _ in
-            if let http = resp as? HTTPURLResponse, http.statusCode < 500 { ok = true }
-            sem.signal()
-        }.resume()
-        _ = sem.wait(timeout: .now() + 2.5)
-        dshlog("probeProxy ok=\(ok)")
-        return ok
-    }
-
-    private func tokenURL() -> String? {
-        for path in urlCandidates {
-            if let s = try? String(contentsOfFile: path, encoding: .utf8) {
-                let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
-                if t.hasPrefix("http"), let u = URL(string: t), u.scheme != nil { return u.absoluteString }
-            }
-        }
-        return defaults.string(forKey: urlKey)
-    }
-
-    private func resolveURL() -> URL? {
-        for path in urlCandidates {
-            guard let s = try? String(contentsOfFile: path, encoding: .utf8) else { dshlog("read fail \(path)"); continue }
-            let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let u = URL(string: t), u.scheme != nil {
-                dshlog("using \(u.absoluteString.prefix(40))")
-                defaults.set(u.absoluteString, forKey: urlKey)
-                currentToken = u.absoluteString
-                return u
-            }
-            dshlog("bad url in \(path)")
-        }
-        if let s = defaults.string(forKey: urlKey), let u = URL(string: s), u.scheme != nil {
-            dshlog("using saved \(u.absoluteString.prefix(40))")
-            return u
-        }
-        dshlog("no url")
-        return nil
-    }
-
-    private func open(_ url: URL) {
-        dshlog("SFSafariViewController \(url.absoluteString.prefix(40))")
-        let cfg = SFSafariViewController.Configuration()
-        cfg.entersReaderIfAvailable = false
-        let vc = SFSafariViewController(url: url, configuration: cfg)
-        vc.preferredControlTintColor = .systemBlue
-        vc.dismissButtonStyle = .close
-        vc.delegate = self
-        vc.modalPresentationStyle = .fullScreen
-        safariVC = vc
-        present(vc, animated: false) {
-            dshlog("safari vc presented")
-        }
-    }
-
-    // —— 兜底输入框 ——
-    private func showForm(_ hint: String) {
-        let label = UILabel()
-        label.numberOfLines = 0
-        label.font = .systemFont(ofSize: 15)
-        label.text = hint
-        label.translatesAutoresizingMaskIntoConstraints = false
-
-        let tf = UITextField()
-        tf.borderStyle = .roundedRect
-        tf.placeholder = "http://127.0.0.1:3080/?token=…"
-        tf.autocapitalizationType = .none
-        tf.autocorrectionType = .no
-        tf.delegate = self
-        tf.translatesAutoresizingMaskIntoConstraints = false
-        field = tf
-
-        let btn = UIButton(type: .system)
-        btn.setTitle("打开", for: .normal)
-        btn.titleLabel?.font = .boldSystemFont(ofSize: 17)
-        btn.addTarget(self, action: #selector(submit), for: .touchUpInside)
-        btn.translatesAutoresizingMaskIntoConstraints = false
-
-        view.addSubview(label); view.addSubview(tf); view.addSubview(btn)
-        NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 24),
-            label.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -24),
-            label.topAnchor.constraint(equalTo: view.topAnchor, constant: 120),
-            tf.leadingAnchor.constraint(equalTo: label.leadingAnchor),
-            tf.trailingAnchor.constraint(equalTo: label.trailingAnchor),
-            tf.topAnchor.constraint(equalTo: label.bottomAnchor, constant: 16),
-            btn.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            btn.topAnchor.constraint(equalTo: tf.bottomAnchor, constant: 20),
-        ])
-    }
-
-    @objc private func submit() {
-        guard let t = field?.text?.trimmingCharacters(in: .whitespacesAndNewlines),
-              let u = URL(string: t), u.scheme != nil else { return }
-        defaults.set(u.absoluteString, forKey: urlKey)
-        field?.resignFirstResponder()
-        open(u)
+        let err = result["error"] as? [String: Any] ?? [:]
+        throw RPCError(code: err["code"] as? String ?? "error", message: err["message"] as? String ?? "未知错误")
     }
 }
 
-extension ShellViewController: SFSafariViewControllerDelegate {
-    func safariViewControllerDidFinish(_ controller: SFSafariViewController) {
-        dshlog("safari closed")
+// MARK: - 模型
+
+struct ChatMessage: Identifiable, Equatable {
+    enum Kind { case user, assistant, tool, info }
+    let id: String
+    var kind: Kind
+    var text: String
+    var toolName: String? = nil
+}
+
+struct SessionSummary: Identifiable, Equatable {
+    let id: String
+    var title: String
+    var running: Bool
+}
+
+// MARK: - Store
+
+@MainActor
+final class ChatStore: ObservableObject {
+    @Published var sessions: [SessionSummary] = []
+    @Published var messages: [ChatMessage] = []
+    @Published var sessionId: String = ""
+    @Published var input: String = ""
+    @Published var busy = false
+    @Published var errorText: String?
+    @Published var connected = false
+
+    private var pollTask: Task<Void, Never>?
+
+    func bootstrap() async {
+        await refreshSessions()
+        if sessionId.isEmpty, let first = sessions.first {
+            await open(first.id)
+        } else if sessionId.isEmpty {
+            await newSession()
+        }
+        connected = true
+    }
+
+    func refreshSessions() async {
+        do {
+            let v = try await RPC.shared.call("session/list", args: ["_request": [:]])
+            let items = (v["items"] as? [[String: Any]]) ?? []
+            sessions = items.compactMap { item in
+                guard let sid = item["sessionId"] as? String else { return nil }
+                return SessionSummary(id: sid,
+                                      title: (item["title"] as? String)?.isEmpty == false ? (item["title"] as! String) : String(sid.prefix(8)),
+                                      running: (item["running"] as? Bool) ?? false)
+            }
+            errorText = nil
+        } catch {
+            errorText = error.localizedDescription
+        }
+    }
+
+    func newSession() async {
+        // 没有“新建会话”接口就复用最近一个；真正的新会话由第一条消息产生时引擎侧创建
+        if let newest = sessions.first { await open(newest.id) }
+    }
+
+    func open(_ sid: String) async {
+        sessionId = sid
+        messages = []
+        await loadPage()
+        startPolling()
+    }
+
+    func loadPage() async {
+        do {
+            let v = try await RPC.shared.call("session/page", args: [
+                "request": ["address": ["sessionId": sessionId, "kind": "session"], "maxMessages": 80],
+            ])
+            let records = (v["records"] as? [[String: Any]]) ?? []
+            messages = Self.buildMessages(records)
+            errorText = nil
+        } catch {
+            errorText = error.localizedDescription
+        }
+    }
+
+    static func buildMessages(_ records: [[String: Any]]) -> [ChatMessage] {
+        var out: [ChatMessage] = []
+        for (i, rec) in records.enumerated() {
+            guard let e = rec["event"] as? [String: Any],
+                  let type = e["type"] as? String,
+                  let data = e["data"] as? [String: Any] else { continue }
+            let id = "\(type)-\(i)"
+            switch type {
+            case "user/message":
+                let parts = (data["content"] as? [[String: Any]]) ?? []
+                let text = parts.compactMap { $0["text"] as? String }.joined()
+                if !text.isEmpty { out.append(ChatMessage(id: id, kind: .user, text: text)) }
+            case "assistant/message":
+                let msg = data["message"] as? [String: Any] ?? [:]
+                let parts = (msg["content"] as? [[String: Any]]) ?? []
+                var text = ""
+                for p in parts {
+                    if (p["type"] as? String) == "text", let t = p["text"] as? String { text += t }
+                }
+                if !text.isEmpty { out.append(ChatMessage(id: id, kind: .assistant, text: text)) }
+            case "tool/call":
+                let name = data["name"] as? String ?? "tool"
+                let args = data["arguments"] as? String ?? ""
+                out.append(ChatMessage(id: id, kind: .tool, text: String(args.prefix(120)), toolName: name))
+            case "turn/end":
+                let ok = ((data["status"] as? String) ?? "") != "error"
+                out.append(ChatMessage(id: id, kind: .info, text: ok ? "— 本轮结束 —" : "— 本轮出错 —"))
+            default:
+                break
+            }
+        }
+        return out
+    }
+
+    func send() async {
+        let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, !sessionId.isEmpty else { return }
+        input = ""
+        busy = true
+        messages.append(ChatMessage(id: "local-\(UUID().uuidString)", kind: .user, text: text))
+        do {
+            _ = try await RPC.shared.call("session/prompt", args: [
+                "request": [
+                    "requestId": UUID().uuidString,
+                    "sessionId": sessionId,
+                    "mode": "standard",
+                    "content": [["type": "text", "text": text]],
+                    "clientTimeZone": TimeZone.current.identifier,
+                ],
+            ])
+            startPolling()
+        } catch {
+            errorText = error.localizedDescription
+            busy = false
+        }
+    }
+
+    func startPolling() {
+        pollTask?.cancel()
+        pollTask = Task { [weak self] in
+            guard let self else { return }
+            var quiet = 0
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 900_000_000)
+                var running = false
+                if let v = try? await RPC.shared.call("session/state", args: ["request": ["sessionId": self.sessionId]]) {
+                    running = (v["running"] as? Bool) ?? false
+                }
+                await self.loadPage()
+                await MainActor.run { self.busy = running }
+                quiet = running ? 0 : quiet + 1
+                if quiet >= 3 { break }
+            }
+        }
     }
 }
 
-// iOS 26 强制 Scene 生命周期
+// MARK: - 视图
+
+struct MessageRow: View {
+    let msg: ChatMessage
+    var body: some View {
+        switch msg.kind {
+        case .user:
+            HStack {
+                Spacer(minLength: 40)
+                Text(msg.text)
+                    .padding(10)
+                    .background(Color.accentColor.opacity(0.16))
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+            }
+        case .assistant:
+            HStack {
+                Text(msg.text)
+                    .padding(10)
+                    .background(Color.secondary.opacity(0.12))
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                Spacer(minLength: 40)
+            }
+        case .tool:
+            HStack(spacing: 6) {
+                Image(systemName: "wrench.and.screwdriver")
+                Text(msg.toolName ?? "tool").bold()
+                Text(msg.text).lineLimit(1).foregroundStyle(.secondary)
+                Spacer()
+            }
+            .font(.caption)
+            .padding(.vertical, 2)
+        case .info:
+            Text(msg.text).font(.caption2).foregroundStyle(.secondary).frame(maxWidth: .infinity)
+        }
+    }
+}
+
+struct ChatView: View {
+    @StateObject private var store = ChatStore()
+    @State private var showSessions = false
+    @State private var showWeb = false
+
+    var body: some View {
+        NavigationStack {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 8) {
+                        ForEach(store.messages) { m in
+                            MessageRow(msg: m).id(m.id)
+                        }
+                        if store.busy {
+                            HStack(spacing: 6) {
+                                ProgressView().scaleEffect(0.7)
+                                Text("生成中…").font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                }
+                .onChange(of: store.messages.count) { _, _ in
+                    if let last = store.messages.last { withAnimation { proxy.scrollTo(last.id, anchor: .bottom) } }
+                }
+            }
+            .safeAreaInset(edge: .bottom) {
+                HStack(spacing: 8) {
+                    TextField("发消息给 DSH…", text: $store.input, axis: .vertical)
+                        .lineLimit(1...5)
+                        .textFieldStyle(.roundedBorder)
+                    Button {
+                        Task { await store.send() }
+                    } label: {
+                        Image(systemName: "arrow.up.circle.fill").font(.system(size: 28))
+                    }
+                    .disabled(store.input.trimmingCharacters(in: .whitespaces).isEmpty || store.busy)
+                }
+                .padding(8)
+                .background(.bar)
+            }
+            .navigationTitle("DSH")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { showSessions = true } label: { Image(systemName: "list.bullet") }
+                }
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button { Task { await store.refreshSessions(); await store.loadPage() } } label: { Image(systemName: "arrow.clockwise") }
+                    Button { showWeb = true } label: { Image(systemName: "safari") }
+                }
+            }
+            .sheet(isPresented: $showSessions) {
+                SessionList(store: store) { showSessions = false }
+            }
+            .sheet(isPresented: $showWeb) { SafariView(url: kWebFallback) }
+            .overlay(alignment: .top) {
+                if let err = store.errorText {
+                    Text(err).font(.caption2).foregroundStyle(.white)
+                        .padding(6).background(.red.opacity(0.85))
+                        .clipShape(Capsule()).padding(.top, 4)
+                }
+            }
+            .task { await store.bootstrap() }
+        }
+    }
+}
+
+struct SessionList: View {
+    @ObservedObject var store: ChatStore
+    var close: () -> Void
+    var body: some View {
+        NavigationStack {
+            List(store.sessions) { s in
+                Button {
+                    Task { await store.open(s.id) }
+                    close()
+                } label: {
+                    HStack {
+                        VStack(alignment: .leading) {
+                            Text(s.title).lineLimit(1)
+                            Text(String(s.id.prefix(8))).font(.caption2).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        if s.running { ProgressView().scaleEffect(0.6) }
+                        if s.id == store.sessionId { Image(systemName: "checkmark") }
+                    }
+                }
+            }
+            .navigationTitle("会话")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("完成") { close() } } }
+        }
+    }
+}
+
+struct SafariView: UIViewControllerRepresentable {
+    let url: URL
+    func makeUIViewController(context: Context) -> SFSafariViewController { SFSafariViewController(url: url) }
+    func updateUIViewController(_ vc: SFSafariViewController, context: Context) {}
+}
+
+// MARK: - 入口
+
 final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options: UIScene.ConnectionOptions) {
-        dshlog("scene willConnect")
         guard let ws = scene as? UIWindowScene else { return }
         let w = UIWindow(windowScene: ws)
-        w.rootViewController = ShellViewController()
+        w.rootViewController = UIHostingController(rootView: ChatView())
         w.makeKeyAndVisible()
         window = w
+        dshlog("native UI up")
     }
 }
 
 final class AppDelegate: UIResponder, UIApplicationDelegate {
-    func application(_ app: UIApplication, didFinishLaunchingWithOptions o: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
-        dshlog("didFinishLaunching")
-        return true
-    }
+    func application(_ app: UIApplication, didFinishLaunchingWithOptions o: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool { true }
     func application(_ application: UIApplication,
                      configurationForConnecting connectingSceneSession: UISceneSession,
                      options: UIScene.ConnectionOptions) -> UISceneConfiguration {
