@@ -26,10 +26,16 @@ jobs:
           flutter-version: ${{ inputs.flutter_version }}
           cache: true
 
-      - name: Versions
+      - name: Select newest Xcode
         run: |
-          flutter --version
+          ls -d /Applications/Xcode*.app 2>/dev/null || true
+          latest=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)
+          if [ -n "$latest" ]; then sudo xcode-select -s "$latest"; fi
           xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Versions
+        run: flutter --version
 
       - name: Pub get
         working-directory: src/app
