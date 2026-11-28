@@ -107,9 +107,11 @@ async function deviceState({ fresh = false, ttl = 1500 } = {}) {
   try {
     const out = maybeJSON((await callTweak("get_screen_info", {})).text);
     const ds = out?.device_state || out;
+    const locked = ds?.locked === true ? true : ds?.locked === false ? false : null;
+    const screenOn = ds?.screen_on === false ? false : ds?.screen_on === true ? true : null;
     const state = {
-      locked: !!(ds?.locked ?? ds?.locked_known === false ? false : ds?.locked),
-      screen_on: !!(ds?.screen_on ?? true),
+      locked,
+      screen_on: screenOn,
       raw_lock_state: ds?.raw_lock_state ?? null,
       scale: out?.scale ?? null,
       pixel: out?.pixel_width && out?.pixel_height ? `${out.pixel_width}x${out.pixel_height}` : null,
