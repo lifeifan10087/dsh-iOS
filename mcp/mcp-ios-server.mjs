@@ -160,12 +160,19 @@ function parseOCR(raw) {
   return out;
 }
 
-async function ocrVision({ region, minConfidence = 0 } = {}) {
+let _ocrCache = { at: 0, key: "", value: null };
+async function ocrVision({ region, minConfidence = 0, ttl = 700 } = {}) {
+  const key = JSON.stringify({ region, minConfidence });
+  if (ttl > 0 && _ocrCache.value && _ocrCache.key === key && Date.now() - _ocrCache.at < ttl) {
+    return _ocrCache.value;
+  }
   const args = { engine: "vision" };
   if (region) args.region = region;
   if (minConfidence) args.min_confidence = minConfidence;
   const { text } = await callTweak("ocr_screen", args);
-  return { items: parseOCR(text), raw: text };
+  const out = { items: parseOCR(text), raw: text };
+  _ocrCache = { at: Date.now(), key, value: out };
+  return out;
 }
 
 function findText(items, needle, { exact = false, index = 0 } = {}) {
@@ -355,11 +362,11 @@ async function screenshotToFile({ prefix = "shot" } = {}) {
 }
 
 // —— 点击类（OCR 定位，修 P0-2）——
-async function tapText({ text, exact = false, index = 0, verify = true, settleMs = 700 }) {
+async function tapText({ text, exact = false, index = 0, verify = true, settleMs = 600, fresh = true }) {
   await requireUnlocked("tap_text");
   const before = verify ? (await callTweak("get_frontmost_app", {})).text : "";
-  const ocrBefore = verify ? (await ocrVision()).items.map((i) => i.text).join("|") : "";
-  const { items } = await ocrVision();
+  const { items, raw: ocrRaw } = await ocrVision({ ttl: fresh ? 0 : 700 });
+  const ocrBefore = verify ? items.map((i) => i.text).join("|") : "";
   const hit = findText(items, text, { exact, index });
   if (!hit || !hit.rect) {
     throw new Error(`屏幕上找不到文本「${text}」（OCR 命中 ${items.length} 条）`);
@@ -404,19 +411,34 @@ async function pressKeyRetry({ key = "delete", times = 1, retries = 3, delayMs =
 }
 
 // —— 深链打开 + 校验（修 P2-5）——
-async function openURLVerified(url, { waitMs = 2500 } = {}) {
+async function openURLVerified(url, { waitMs = 2500, verifyScreen = true } = {}) {
   const bin = which("uiopen");
   if (!bin) throw new Error("uiopen 不存在（装 uikittools）");
   const before = maybeJSON((await callTweak("get_frontmost_app", {})).text)?.bundleId || null;
+  // 深链常常在**同一个 App 内**跳页（prefs:root=General 就是），前台不会变，
+  // 只有对比屏幕内容才能判断到底有没有跳成功。
+  const sigBefore = verifyScreen ? (await ocrVision({ ttl: 0 })).items.map((i) => i.text).join("|") : "";
   await sh(bin, [url], { timeoutMs: 15000 }).catch(() => {});
   const deadline = Date.now() + waitMs;
-  let after = before;
+  let after = before, screenChanged = null, topText = null;
   while (Date.now() < deadline) {
     after = maybeJSON((await callTweak("get_frontmost_app", {})).text)?.bundleId || null;
     if (after && after !== before) break;
     await new Promise((r) => setTimeout(r, 250));
   }
-  return { url, before, after, changed: before !== after, verified: before !== after };
+  if (verifyScreen) {
+    const items = (await ocrVision({ ttl: 0 })).items;
+    screenChanged = items.map((i) => i.text).join("|") !== sigBefore;
+    const sorted = items.filter((i) => i.rect).sort((a, b) => a.rect.y - b.rect.y);
+    topText = sorted[1]?.text ?? sorted[0]?.text ?? null;
+  }
+  const changed = before !== after;
+  return {
+    url, before, after, changed,
+    screenChanged, topTextAfterOpen: topText,
+    verified: changed || screenChanged === true,
+    note: changed ? "前台已切换" : screenChanged ? "同一 App 内跳页（按屏变判定）" : "未见变化",
+  };
 }
 
 // —— 工具定义 ——
@@ -597,6 +619,34 @@ const TOOLS = [
     },
   },
   {
+    name: "view_screen",
+    description: "截图并作为图片内容返回给模型（不经过 sharp；scale 可缩小以省带宽）",
+    inputSchema: { type: "object", properties: { scale: { type: "number" }, max_bytes: { type: "number" } }, additionalProperties: false },
+    run: async (a) => {
+      const { image } = await callTweak("screenshot", {});
+      if (!image) throw new Error("tweak 没返回图片数据");
+      let data = image.data;
+      if (a.max_bytes && Buffer.byteLength(data, "base64") > a.max_bytes) {
+        // 太大就不内联，退回落盘
+        const saved = await screenshotToFile({ prefix: "big" });
+        return { note: "图片过大，已落盘；请用 screenshot_file 拿路径", ...saved };
+      }
+      return { __image: { data, mimeType: image.mimeType } };
+    },
+  },
+  {
+    name: "list_running_apps",
+    description: "当前运行的「应用」（过滤掉系统服务/输入法等噪声，只留带 bundleId 的用户 App）",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    run: async () => {
+      const raw = maybeJSON((await callTweak("list_running_apps", {})).text);
+      const arr = Array.isArray(raw) ? raw : raw?.apps || [];
+      const apps = arr.filter((x) => x && typeof x.bundleId === "string" && x.bundleId.includes("."))
+        .map((x) => ({ name: x.name || x.processName || null, bundleId: x.bundleId, pid: x.pid ?? null }));
+      return { count: apps.length, apps };
+    },
+  },
+  {
     name: "device_info",
     description: "设备与运行环境概览（含 helper 可用性真值）",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
@@ -655,6 +705,12 @@ async function handle(msg) {
     }
     try {
       const out = await tool.run(params?.arguments || {});
+      if (out && typeof out === "object" && out.__image) {
+        return send({
+          jsonrpc: "2.0", id,
+          result: { content: [{ type: "image", data: out.__image.data, mimeType: out.__image.mimeType }] },
+        });
+      }
       const text = typeof out === "string" ? out : JSON.stringify(out, null, 2);
       return send({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text }] } });
     } catch (e) {
