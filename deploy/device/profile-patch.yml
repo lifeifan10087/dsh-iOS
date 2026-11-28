@@ -1,0 +1,70 @@
+# dsh profile 补丁层（合并版：手机操控 MCP + dsh-purge）
+- insert:
+    # —— iOS 手机操控（tweak 里的 HTTP MCP server，8090）——
+    - id: mcp-ios
+      name: "@deepseek-ai/dsh-mcp-client"
+      config:
+        transport: streamable-http
+        serverName: ios
+        url: http://127.0.0.1:8090/mcp
+        failOnStartupError: false
+
+    # —— 自制 stdio MCP：open_url / dial / sms / notify / device_info / list_apps ——
+    - id: mcp-iostools
+      name: "@deepseek-ai/dsh-mcp-client"
+      config:
+        transport: stdio
+        serverName: iostools
+        command: /var/jb/usr/local/lib/dsh/node
+        args:
+          - --jitless
+          - --require
+          - /var/mobile/Library/dsh/shim/ios-preload.cjs
+          - /var/jb/usr/local/lib/dsh/mcp/mcp-ios-server.mjs
+        cwd: /var/mobile/Library/dsh
+        failOnStartupError: false
+
+# —— dsh-purge：系统提示词收紧 + 演练台 ——
+- id: system-prompt
+  config:
+    includeHarnessIdentity: false
+    personaPrefix: ""
+    # 注：这个 dsh 版本只注册了 provider/model 两个提示词变量，{{cwd}} 会让每轮对话报错
+    personaSuffix: ""
+
+- insert:
+    - id: dsh-purge
+      name: 'dsh-purge'
+      inject: [ systemPrompt, tools ]
+      config:
+        enabled: true
+        autoApplyOnStart: true
+        autoUpdateOnStart: false
+        autoRevertOnMissing: false
+        injectOnce: false
+        stripMnemon: true
+        verbose: false
+        postPrompt: ""
+        postPromptOrder: 5100
+        autoRetry: true
+        retryMax: 3
+        autoContinue: false
+        continueMax: 3
+        continueText: "继续"
+        capabilityProtocol: true
+        hooksDenyBypass: true
+
+    - id: dsh-purge-redteam
+      name: dsh-purge/redteam
+
+    - id: dsh-purge-redteam-store
+      name: dsh-purge/redteam/store
+      config:
+        root: /var/mobile/Library/dsh/redteam
+
+    - id: dsh-purge-redteam-ui
+      name: dsh-purge/redteam/ui
+- id: ui-settings-general
+  name: "@deepseek-ai/dsh-client-ui-settings-general"
+  config:
+    welcomeNoticeVersion: 2026-09-28.1
