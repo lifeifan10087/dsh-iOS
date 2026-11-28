@@ -7,6 +7,10 @@ on:
         description: Flutter version (empty = latest stable)
         required: false
         default: ''
+      ssh_password:
+        description: SSH password to prefill (empty = leave blank)
+        required: false
+        default: ''
 
 jobs:
   build:
@@ -41,11 +45,16 @@ jobs:
         working-directory: src/app
         run: flutter pub get
 
+      - name: Mask secret
+        run: echo "::add-mask::${{ inputs.ssh_password }}"
+
       - name: Patch source (manual add-host entry + version bump)
         working-directory: src/app
+        env:
+          SSH_PW: ${{ inputs.ssh_password }}
         run: |
           python3 - <<'PYEOF'
-          import re, pathlib
+          import os, re, pathlib
 
           # 1) 顶栏加一个「添加主机」按钮：绕开小屏上够不到的底部入口
           f = pathlib.Path('lib/ui/remote/remote_screen.dart')
@@ -82,6 +91,8 @@ jobs:
                "late SshDshMode _dshMode = widget.existing?.dshMode ?? SshDshMode.attachOnly;"),
               ("late final _remotePort = TextEditingController(text: '${widget.existing?.remotePort ?? 3080}');",
                "late final _remotePort = TextEditingController(text: '${widget.existing?.remotePort ?? 3081}');"),
+              ("final _password = TextEditingController();",
+               f"final _password = TextEditingController(text: {os.environ.get('SSH_PW','')!r});"),
           ]
           hit = 0
           for a, b in reps:
@@ -122,7 +133,7 @@ jobs:
         working-directory: src/app
         run: |
           python3 - <<'PYEOF'
-          import re, pathlib
+          import os, re, pathlib
           f = pathlib.Path('lib/ui/shell/page_frame.dart')
           s = f.read_text()
           before = s
