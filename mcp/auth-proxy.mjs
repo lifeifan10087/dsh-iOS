@@ -61,9 +61,13 @@ function upstreamHeaders(req, extraCookie) {
   if (h["x-forwarded-host"]) delete h["x-forwarded-host"];
   if (h["x-forwarded-proto"]) delete h["x-forwarded-proto"];
   if (extraCookie) {
-    // 保留客户端自己的 cookie，再叠加会话 cookie
-    const client = h.cookie ? `${h.cookie}; ` : "";
-    h.cookie = client + extraCookie;
+    // 客户端可能还带着旧引擎留下的 dsh-auth-* cookie；它会排在前面被服务器先取到，
+    // 导致「首页 200、写接口 401」这种怪象。这里只保留非 dsh-auth 的 cookie。
+    const kept = String(h.cookie || "")
+      .split(";")
+      .map((s) => s.trim())
+      .filter((s) => s && !s.startsWith("dsh-auth-"));
+    h.cookie = [ ...kept, extraCookie ].join("; ");
   }
   return h;
 }
