@@ -331,6 +331,18 @@ postinst 顺序：解包 → **apply-patches --quiet** → 起守护 → **smoke
   （连接/锁屏/前台应用/最后检查/探针地址 + 三个一键动作）。`check.mjs --load` 通过（中英文视图均可画），
   已 `dsh plugin --profile web add` 装入 web profile（软链 + dependencies）。
 
+## 事故记录：App 图标消失（2026-11-28 12:30）
+
+为了让「文件」App 刷新目录列表，执行过 `killall -9 lsd` + 针对单个 App 的 `uicache -p`。
+结果 LaunchServices 数据库部分重建，`/var/jb/Applications` 下的 App
+（NewTerm / Sileo / TrollStoreLite / TrollStorePersistenceHelper）注册丢失，图标消失。
+文件没丢，`ls /var/jb/Applications` 四个都在。
+
+修复：`uicache -a`（全量）+ `killall -9 SpringBoard`。恢复后用户应用从 8 个变回 12 个。
+
+**规则**：刷新应用注册只用 `uicache -a` + respring，不要 `uicache -p` 配 `killall lsd`。
+另外 `shareddocuments://` 跳转会把宿主 App 的 Safari 页面带到文件预览，演示后要重启宿主 App。
+
 ## 关键坐标
 
 | 项 | 值 |
