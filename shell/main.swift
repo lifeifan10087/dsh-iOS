@@ -50,8 +50,10 @@ final class ShellViewController: UIViewController, UITextFieldDelegate {
         super.viewDidAppear(animated)
         if !opened {
             opened = true
-            if probeProxy() { open(URL(string: proxyURL)!); return }
-            if let u = resolveURL() { open(u); return } else {
+            // 优先用容器里的 token（boot-start 会持续刷新它）——直连引擎最稳；
+            // 代理作为兜底（token 文件缺失/引擎未起时仍能让界面起来）。
+            if let u = resolveURL() { open(u); return }
+            if probeProxy() { open(URL(string: proxyURL)!); return } else {
                 showForm("没找到引擎地址。先在手机上跑：\nsh /var/mobile/Library/dsh/start-engine.sh\n然后把带 token 的地址粘进来：")
                 return
             }
