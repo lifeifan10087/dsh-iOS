@@ -9,7 +9,7 @@ echo "SDK: $SDK"
 rm -rf out Payload
 mkdir -p out Payload/DshGo.app
 xcrun -sdk iphoneos swiftc -target arm64-apple-ios14.0 -O -sdk "$SDK" \
-  -framework UIKit -framework WebKit \
+  -framework UIKit -framework SafariServices \
   -o Payload/DshGo.app/DshGo shell/main.swift
 cp shell/Info.plist Payload/DshGo.app/Info.plist
 chmod 755 Payload/DshGo.app/DshGo
