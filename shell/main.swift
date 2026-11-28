@@ -161,7 +161,29 @@ final class ChatStore: ObservableObject {
 
     private var poll: Task<Void, Never>?
     private var ticker: Task<Void, Never>?
-    private var titleCache: [String: String] = [:]
+    private var titleCache: [String: String] = (UserDefaults.standard.dictionary(forKey: "dsh.titles") as? [String: String]) ?? [:]
+
+    private func rememberTitle(_ sid: String, _ title: String) {
+        titleCache[sid] = title
+        UserDefaults.standard.set(titleCache, forKey: "dsh.titles")
+        if let i = sessions.firstIndex(where: { $0.id == sid }) { sessions[i].title = title }
+    }
+
+    /// 会话列表本身不带标题，标题在 session/title 事件里；抽屉打开时按需补
+    func loadTitles(limit: Int = 14) async {
+        var budget = limit
+        for s in sessions where budget > 0 {
+            budget -= 1
+            if titleCache[s.id] != nil { continue }
+            guard let v = try? await RPC.shared.call("session/page", args: ["request": [
+                "address": ["sessionId": s.id, "kind": "session"], "maxMessages": 40]]) else { continue }
+            for rec in ((v["records"] as? [[String: Any]]) ?? []) {
+                guard let e = rec["event"] as? [String: Any], (e["type"] as? String) == "session/title",
+                      let d = e["data"] as? [String: Any], let title = d["title"] as? String, !title.isEmpty else { continue }
+                rememberTitle(s.id, title)
+            }
+        }
+    }
 
     init() {
         accentIndex = UserDefaults.standard.object(forKey: "dsh.accent") as? Int ?? 0
@@ -230,8 +252,7 @@ final class ChatStore: ObservableObject {
             for rec in records {
                 if let e = rec["event"] as? [String: Any], (e["type"] as? String) == "session/title",
                    let d = e["data"] as? [String: Any], let t = d["title"] as? String, !t.isEmpty {
-                    titleCache[sessionId] = t
-                    if let i = sessions.firstIndex(where: { $0.id == sessionId }) { sessions[i].title = t }
+                    rememberTitle(sessionId, t)
                 }
             }
             errorText = nil
@@ -461,6 +482,7 @@ struct Drawer: View {
         }
         .frame(maxWidth: 310).background(.background)
         .sheet(isPresented: $showSettings) { SettingsView() }
+        .task { await store.loadTitles() }
     }
 
     func row(_ s: SessionRow) -> some View {
