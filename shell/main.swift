@@ -1,6 +1,25 @@
 import UIKit
 import WebKit
 
+// 全局日志：写到 Documents/dsh-app.log（还兜底写 /tmp，沙盒外也能看）
+func dshlog(_ msg: String) {
+    let line = "[\(Int(Date().timeIntervalSince1970))] \(msg)\n"
+    let data = line.data(using: .utf8)!
+    if let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+        let url = docs.appendingPathComponent("dsh-app.log")
+        if let h = try? FileHandle(forWritingTo: url) {
+            h.seekToEndOfFile(); h.write(data); try? h.close()
+        } else {
+            try? data.write(to: url)
+        }
+    }
+    if let h = try? FileHandle(forWritingTo: URL(fileURLWithPath: "/tmp/dsh-go-shell.log")) {
+        h.seekToEndOfFile(); h.write(data); try? h.close()
+    } else {
+        try? data.write(to: URL(fileURLWithPath: "/tmp/dsh-go-shell.log"))
+    }
+}
+
 // 极简原生壳：WKWebView 连本机 dsh 引擎（127.0.0.1:3080/?token=...）
 // 越狱机上用 Theos 编译：make package THEOS_PACKAGE_SCHEME=rootless
 
@@ -8,17 +27,7 @@ final class ShellViewController: UIViewController, WKNavigationDelegate, WKUIDel
     private var web: WKWebView!
     private let defaults = UserDefaults.standard
 
-    // 极简文件日志：写到自己的 Documents/dsh-app.log，方便从 SSH 侧看它卡在哪
-    private func log(_ msg: String) {
-        guard let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else { return }
-        let url = docs.appendingPathComponent("dsh-app.log")
-        let line = "[~(Int(Date().timeIntervalSince1970))] \(msg)\n"
-        if let h = try? FileHandle(forWritingTo: url) {
-            h.seekToEndOfFile(); h.write(line.data(using: .utf8)!); try? h.close()
-        } else {
-            try? line.data(using: .utf8)?.write(to: url)
-        }
-    }
+
     private let urlKey = "dsh.web.url"
 
     override func viewDidLoad() {
@@ -32,7 +41,7 @@ final class ShellViewController: UIViewController, WKNavigationDelegate, WKUIDel
         web.uiDelegate = self
         view.addSubview(web)
         UIApplication.shared.isIdleTimerDisabled = true
-        log("viewDidLoad start")
+        dshlog("viewDidLoad start")
         loadEntry()
     }
 
@@ -52,12 +61,12 @@ final class ShellViewController: UIViewController, WKNavigationDelegate, WKUIDel
     }
 
     private func loadEntry() {
-        log("docs=" + (( FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?.path) ?? "nil"))
+        dshlog("docs=" + (( FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?.path) ?? "nil"))
         for path in urlCandidates {
-            guard let s = try? String(contentsOfFile: path, encoding: .utf8) else { log("read fail: \(path)"); continue }
+            guard let s = try? String(contentsOfFile: path, encoding: .utf8) else { dshlog("read fail: \(path)"); continue }
             let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard let u = URL(string: trimmed), u.scheme != nil else { log("bad url in \(path)"); continue }
-            log("using \(u.absoluteString.prefix(40))")
+            guard let u = URL(string: trimmed), u.scheme != nil else { dshlog("bad url in \(path)"); continue }
+            dshlog("using \(u.absoluteString.prefix(40))")
             defaults.set(u.absoluteString, forKey: urlKey)
             hideEntryForm()
             web.load(URLRequest(url: u))
@@ -68,7 +77,7 @@ final class ShellViewController: UIViewController, WKNavigationDelegate, WKUIDel
             web.load(URLRequest(url: u))
             return
         }
-        log("no url found, showing form")
+        dshlog("no url found, showing form")
         showEntryForm("没有找到引擎地址。先在手机上跑：\nsh /var/mobile/Library/dsh/start-engine.sh\n然后把带 token 的地址粘进来：")
     }
 
@@ -138,12 +147,12 @@ final class ShellViewController: UIViewController, WKNavigationDelegate, WKUIDel
 
     // 加载失败要说清楚原因，别只留一片灰
     func webView(_ w: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        log("didFailProvisional: \(error.localizedDescription)")
+        dshlog("didFailProvisional: \(error.localizedDescription)")
         showEntryForm("打不开引擎界面：\(error.localizedDescription)\n先确认引擎在跑，再粘地址：")
     }
 
     func webView(_ w: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        log("didFail: \(error.localizedDescription)")
+        dshlog("didFail: \(error.localizedDescription)")
         showEntryForm("加载失败：\(error.localizedDescription)")
     }
 
@@ -161,11 +170,13 @@ final class ShellViewController: UIViewController, WKNavigationDelegate, WKUIDel
 final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     var window: UIWindow?
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options: UIScene.ConnectionOptions) {
-        guard let ws = scene as? UIWindowScene else { return }
+        dshlog("scene willConnect")
+        guard let ws = scene as? UIWindowScene else { dshlog("scene cast failed"); return }
         let w = UIWindow(windowScene: ws)
         w.rootViewController = ShellViewController()
         w.makeKeyAndVisible()
         window = w
+        dshlog("window visible")
     }
 }
 
@@ -173,6 +184,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
 
     func application(_ app: UIApplication, didFinishLaunchingWithOptions o: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
+        dshlog("didFinishLaunching")
         return true
     }
 
