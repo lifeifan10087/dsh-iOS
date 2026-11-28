@@ -206,6 +206,50 @@ curl -s -o /dev/null -w '%{http_code}\n' -b "$cookie" http://127.0.0.1:3080/redt
 - `dsh --dump-config` **默认不含用户补丁层**，所以“树里没有某插件”不能作为未安装的证据。
 - `--patch <file>` 显式传入是有效的，可用于区分「补丁内容问题」和「补丁层没被读到」。
 
+## 手机操控 MCP 全面修复（2026-11-28 10:30）
+
+报告（QQ 传来的 815 行深测）里的缺陷，全部在 **root 守护层**补齐：`mcp/mcp-ios-server.mjs` v0.2
+（20 个工具），由引擎作为 stdio MCP 加载（pid 形如 `node ... /var/jb/usr/local/lib/dsh/mcp/mcp-ios-server.mjs`）。
+
+### 环境层的三个隐藏地雷（先修这些，否则一切白搭）
+1. **`DSH_HOME` 未设** → 引擎把 profile 解析到 `/var/jb/var/root/.dsh`，插件与 MCP 全都不生效。
+   修：`boot-start.sh` / `env.sh` 里 `export DSH_HOME=/var/mobile/Library/dsh`。
+2. **`/var/jb/bin/sh` 不存在** → launchd 作业（sshd、本引擎）`Program` 指向它，直接 **EX_CONFIG 78**，
+   表现为重启后 SSH 彻底连不上（22 端口能握手但无 banner）。修：`ln -sfn /var/jb/usr/bin/dash /var/jb/bin/sh`，
+   `boot-start.sh` 里已加幂等兜底。
+3. **iOS 的 `/tmp` 是每会话私有的**：一个 SSH 会话写的文件，另一个会话看不到。跨会话传脚本放
+   `/var/mobile/Library/dsh/tmp/`。
+
+### 工具层修复对照
+| 报告问题 | 修法 | 实测 |
+|---|---|---|
+| P0-1 helper 执行链断 | `run_command` 直接 root 起 `/var/jb/bin/sh`；`tail_syslog` root 跑 `mcp-logreader` | `uid=0(root)`、日志正常 |
+| P0-2 `tap_element` 坐标错位 | 新增 `tap_text`：Vision OCR 定位 → 点中心 → 回读屏幕变化 | 点「无线局域网」命中 (126,452)，`screenChanged:true` |
+| P1-1 `write_file` 父目录 bug | 自己实现 dirname + `mkdir -p` | 写入并回读成功 |
+| P1-2 默认 OCR 必挂 | `ocr` 固定走 Vision | 59 条带 rect |
+| P1-3 agent 看不见屏幕 | `screenshot_file` 截图落盘返路径 | 103 KB jpg |
+| P2-4 首击丢失 | `press_key_retry` 回读重试 | 已实现 |
+| P2-5 深链静默失败 | `open_url_verified` 轮询前台 | `prefs:root=General` → 校验到 Preferences |
+| P2-6 `contextId` 不可靠 | `frontmost_app` 剔除非标识字段 | 只回 bundleId/name/pid |
+| P2-7 锁屏只锁不开 | 写操作前置 `device_state` 守卫 + 结构化 `blocked/next_step` | 无误报解锁 |
+| P3 `list_apps` 漏应用 | 扫 /Applications + /var/jb + /var/containers/Bundle/Application，自写 bplist 解析 | NewTerm→ws.hbang.Terminal ✓ |
+| G 组缺 pbcopy/sbbanner | 剪贴板走 tweak 私有 API | 写入读回一致 |
+
+引擎侧验证（ACP 回合）：agent 调 `mcp__iostools__run_command` → `uid=0(root)`；`write_file` → 落盘成功。
+
+### 仍未解决
+- **模型直接看图**：`sharp/libvips` 仍不可用。libvips 是 macOS 平台的 dylib，改成 iOS 平台后卡在
+  它依赖的 macOS 框架路径（`Foundation.framework/Versions/C/...`），需要整套依赖重写。当前替代：
+  `screenshot_file` 落盘 + `ocr` 取文本。
+- **PaddleOCR worker**：不做，统一走 Vision。
+- **install_app/uninstall_app**：依赖 installd 钩子，未动。
+
+### 本机调试手法（省时间）
+- 设备 8090 的 tweak MCP 监听在 LAN 上，可直接从宿主 `http://<iphone>:8090/mcp` 调，SSH 挂了也能操作手机。
+- 传文件用 base64 over ssh（SFTP 子系统不稳），目标写 `/var/mobile/Library/dsh/tmp/`。
+- root 执行：`printf '%s\n' "$IPHONE_PASS" | sshpass -e ssh ... 'sudo -S -p "" ...'`；
+  不要同时用 heredoc 喂数据（会抢走 sudo 的 stdin）。
+
 ## 关键坐标
 
 | 项 | 值 |
