@@ -50,10 +50,11 @@ final class ShellViewController: UIViewController, UITextFieldDelegate {
         super.viewDidAppear(animated)
         if !opened {
             opened = true
-            // 优先用容器里的 token（boot-start 会持续刷新它）——直连引擎最稳；
-            // 代理作为兜底（token 文件缺失/引擎未起时仍能让界面起来）。
-            if let u = resolveURL() { open(u); return }
-            if probeProxy() { open(URL(string: proxyURL)!); return } else {
+            // 优先走本地代理（127.0.0.1:3081）：端口不同 = 独立 origin，
+            // App 有自己的前端存储，不会继承 Safari 里那些旧会话；代理还会自己换 cookie。
+            // 代理不在时退回容器里的 token URL（boot-start 会持续刷新）。
+            if probeProxy() { open(URL(string: proxyURL)!); return }
+            if let u = resolveURL() { open(u); return } else {
                 showForm("没找到引擎地址。先在手机上跑：\nsh /var/mobile/Library/dsh/start-engine.sh\n然后把带 token 的地址粘进来：")
                 return
             }
