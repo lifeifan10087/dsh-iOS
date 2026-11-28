@@ -65,7 +65,22 @@ jobs:
           else:
               print('remote_screen: 跳过（已存在或未匹配）')
 
-          # 2) 版本号自增，保证 TrollStore 一定视为升级
+          # 2) SSH 表单：预填令牌 + 默认「只连接」，让小屏上不用滚到底部
+          f2 = pathlib.Path('lib/ui/remote/ssh_host_form.dart')
+          s2 = f2.read_text()
+          token = 'CLY_BlZtvB2U8d3-zBOVv5GxVFzk0A0aCNxe9MPy17A'
+          a = "final _attachToken = TextEditingController();"
+          b = f"final _attachToken = TextEditingController(text: '{token}');"
+          c = "late SshDshMode _dshMode = widget.existing?.dshMode ?? SshDshMode.managed;"
+          d = "late SshDshMode _dshMode = widget.existing?.dshMode ?? SshDshMode.attachOnly;"
+          if a in s2 and c in s2:
+              s2 = s2.replace(a, b, 1).replace(c, d, 1)
+              f2.write_text(s2)
+              print('ssh_host_form: 令牌已预填，默认只连接')
+          else:
+              print('WARN: ssh_host_form 模式未命中')
+
+          # 3) 版本号自增，保证 TrollStore 一定视为升级
           pub = pathlib.Path('pubspec.yaml')
           t = pub.read_text()
           m = re.search(r'^version:\s*(\d+)\.(\d+)\.(\d+)\+(\d+)\s*$', t, re.M)
