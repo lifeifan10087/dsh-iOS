@@ -12,6 +12,9 @@
   <key>UIApplicationSceneManifest</key><dict>
     <key>UIApplicationSupportsMultipleScenes</key><false/>
   </dict>
+  <!-- 让「文件」App 里出现「我的 iPhone → DSH Go」，这样工作区文件可以直接长按分享 -->
+  <key>UIFileSharingEnabled</key><true/>
+  <key>LSSupportsOpeningDocumentsInPlace</key><true/>
   <key>UILaunchScreen</key><dict/>
   <key>NSAppTransportSecurity</key><dict>
     <key>NSAllowsLocalNetworking</key><true/>
