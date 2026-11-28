@@ -119,6 +119,37 @@ cd /var/mobile/Library/dsh/profiles/web && pnpm add /tmp/dsh-purge.tgz
   3. 任意一台装了 Xcode 的 Mac：`bash shell/build-ipa.sh` → `out/DshGo.ipa`
   4. `deploy/fetch-ipa.sh` 自动把产物取回并放到 `/sdcard/Download/DSH-Go/DshGo.ipa`
 
+## 壳的渲染（2026-11-28 08:38，已解决）
+
+**WKWebView 在这台越狱机上内容层不出画**：进程（WebContent/GPU/Networking）都起、JS 能跑、
+DOM 有 44KB、`document.body.innerText` 有内容，但屏幕上只有灰底 + 滚动条；
+Safari 打开同一个地址完全正常。排查过的无效方向：
+- entitlement（`platform-application`/`no-sandbox` 去掉后一样灰）
+- 安装方式（手工拷 /var/jb/Applications + trustcache vs TrollStore 正规安装到
+  /var/containers/Bundle/Application/<UUID>/，都一样灰）
+- cookie（URLSession 拦 303 取 Set-Cookie 写进 cookie store，页面确实进了首页）
+- UA（伪装 Safari 无效）
+
+**解法：改用 `SFSafariViewController`**（`import SafariServices`，链接时加
+`-framework SafariServices`）。页面跑在系统的 SafariViewService 里，渲染通道和 Safari 一致，
+实测界面正常显示（能看到 dsh-purge 的用户须知、胶囊、工具栏）。
+
+壳的其余要点（都保留）：
+- `SceneDelegate`（iOS 26 必须有）
+- 地址三路径：`Documents/dsh-url.txt` → `/var/mobile/Library/dsh/.web-url` → `Documents/dsh-url.txt`，
+  再退到 UserDefaults，都没有就显示就地输入框（不要用 viewDidLoad 里弹 alert，会静默失败）
+- 日志写 `/tmp/dsh-go-shell.log`（沙盒外可读），带环境探测
+
+安装通道（TrollStore Lite，已装在设备上）：
+```sh
+# 宿主机挂 IPA
+python3 -m http.server 8899 --directory /sdcard/Download/DSH-Go &
+# 设备侧触发起装（会弹确认框，需点 Install）
+uiopen "apple-magnifier://install?url=http://HOST_IP:8899/DshGo.ipa"
+```
+> 同 bundle id 若已被手工装过（/var/jb/Applications/DshGo.app），TrollStore 会报 **Error 179**，
+> 先 `rm -rf /var/jb/Applications/DshGo.app && uicache -a` 再装。
+
 ## 关键坐标
 
 | 项 | 值 |
