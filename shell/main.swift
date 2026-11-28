@@ -23,7 +23,7 @@ func dshlog(_ msg: String) {
 // 极简原生壳：WKWebView 连本机 dsh 引擎（127.0.0.1:3080/?token=...）
 // 越狱机上用 Theos 编译：make package THEOS_PACKAGE_SCHEME=rootless
 
-final class ShellViewController: UIViewController, WKNavigationDelegate, WKUIDelegate {
+final class ShellViewController: UIViewController, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
     private var web: WKWebView!
     private let defaults = UserDefaults.standard
 
@@ -35,6 +35,21 @@ final class ShellViewController: UIViewController, WKNavigationDelegate, WKUIDel
         let cfg = WKWebViewConfiguration()
         cfg.allowsInlineMediaPlayback = true
         cfg.preferences.setValue(true, forKey: "developerExtrasEnabled")
+        // 把页面里的 console / 未捕获错误回传出来，WKWebView 里没有 Safari 的 Web Inspector
+        cfg.userContentController.add(self, name: "dshlog")
+        let hook = """
+        (function(){
+          function send(kind, args){
+            try { window.webkit.messageHandlers.dshlog.postMessage(kind + ': ' + Array.prototype.map.call(args, function(a){
+              try { return (typeof a === 'object') ? JSON.stringify(a).slice(0,300) : String(a); } catch(e){ return String(a); }
+            }).join(' ')); } catch(e){}
+          }
+          ['error','warn'].forEach(function(k){ var o=console[k]; console[k]=function(){ send(k, arguments); return o.apply(console, arguments); }; });
+          window.addEventListener('error', function(e){ send('onerror', [e.message + ' @' + (e.filename||'') + ':' + (e.lineno||0)]); });
+          window.addEventListener('unhandledrejection', function(e){ send('rejection', [String(e.reason && (e.reason.stack||e.reason.message||e.reason) || 'unknown')]); });
+        })();
+        """
+        cfg.userContentController.addUserScript(WKUserScript(source: hook, injectionTime: .atDocumentStart, forMainFrameOnly: false))
         // 用 Auto Layout 铺满：viewDidLoad 阶段 view.bounds 可能是 0，
         // 用 frame 会导致 webview 尺寸为 0 —— 进程都在、界面全灰、也不报错。
         web = WKWebView(frame: .zero, configuration: cfg)
@@ -87,6 +102,10 @@ final class ShellViewController: UIViewController, WKNavigationDelegate, WKUIDel
         }
         dshlog("no url found, showing form")
         showEntryForm("没有找到引擎地址。先在手机上跑：\nsh /var/mobile/Library/dsh/start-engine.sh\n然后把带 token 的地址粘进来：")
+    }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        if message.name == "dshlog" { dshlog("js " + String(describing: message.body)) }
     }
 
     /// 先用 URLSession 请求带 token 的地址，**拦下 303 不跟随**，只取 Set-Cookie，
