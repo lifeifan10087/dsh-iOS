@@ -93,3 +93,29 @@ entitlements 文件：`/var/mobile/Library/dsh/tmp/ent.plist`（不含 no-sandbo
 - iOS 偏好是 cfprefsd 缓存的，直接写 plist 常被覆盖；要生效得 kill Runner + killall cfprefsd 再启动（且不一定成功）
 - 合成触摸（IOHID）打不进 Flutter 的某些 `Stack/Positioned` 底栏；无障碍 `tap_element` 返回 tapped 但不触发 onPressed → 这类按钮**只能真手指点**
 - TrollStore 同版本覆盖会误报 `Parse Error 301`；改版本号能过，但后来连改版本也失效 → 那是 TrollStore 自身状态脏了
+
+## 十、2026-11-29 00:05 追加：EPERM 的确切性质
+
+实测两件事，把问题钉死了：
+
+| 测试 | 结果 | 含义 |
+|---|---|---|
+| App 内点「使用 GitHub 登录」 | 正常打开 github 登录页 | 系统 WebView 进程的网络是好的 |
+| App 自己连 `127.0.0.1:22` | `Operation not permitted` | **App 自身进程没有网络权限** |
+| 设置 → 隐私 → 本地网络 | 列表里**没有** DSH Go | 它没被当正常应用注册 |
+
+结论：手工替换二进制（ldid 签名 + 改 bundle）虽然能启动，但拿不到正常应用的网络沙箱配置。
+`com.apple.private.security.no-sandbox` 会被 AMFI 拒绝（启动即崩）。
+
+## 十一、下一步（唯一可行路径）
+
+让它被**正常安装**一次，二选一：
+
+1. **AppSync Unified**（推荐，最快）
+   - Sileo 里搜索 AppSync Unified → 安装（Karen 源，需联网）
+   - 然后我在设备上执行：`/var/jb/usr/bin/mcp-appinst /var/mobile/Library/dsh/tmp/Flow6.ipa`
+   - AppSync 会伪造签名让 installd 接受，装出来的是**正常应用**（有网络权限）
+2. **TrollStore Lite** 修好安装器后重装（当前对所有 IPA 报 Parse Error 301，未查明原因）
+
+装好后：引导页「继续」→ 点「本机 mobile@127.0.0.1」→ 指纹确认 → 进聊天界面。
+引擎在 3080、代理在 3081，都不用动。
