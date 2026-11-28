@@ -46,13 +46,8 @@ fi
 
 MARK="=== dsh start $(date +%s) ==="
 echo "$MARK" >>"$LOG"
-# profile 自带的 cordis.patch.yml 在这台机器上没有生效（--dump-config 不含用户层，
-# 实测启动后插件路由 404），所以把补丁文件显式作为 --patch 层传进去。
-PATCHF=/var/mobile/Library/dsh/profiles/web/cordis.patch.yml
-PATCHARG=""
-[ -f "$PATCHF" ] && PATCHARG="--patch $PATCHF"
 nohup "$NODE" --jitless --max-old-space-size=1024 --require "$PRE" --expose-internals \
-  --experimental-sqlite "$APP" --profile web $PATCHARG --host 127.0.0.1 --port 3080 --no-open >>"$LOG" 2>&1 &
+  --experimental-sqlite "$APP" web --host 127.0.0.1 --port 3080 --no-open >>"$LOG" 2>&1 &
 echo $! > "$PIDF"
 
 # 本地反向代理：固定 127.0.0.1:3081，替宿主 App 跟引擎换 cookie（token 每次启动都变）
