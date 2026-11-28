@@ -106,26 +106,36 @@ struct SessionRow: Identifiable, Equatable {
     var updatedAt: Date
 }
 
-// 把引擎塞在消息里的上下文包装裁掉，只留用户真正说的话
+// 引擎会把 runtime context 作为消息注入；这些段落要裁掉，只剩真正说的话
+let kNoiseMarkers = [
+    "Current runtime context", "Current DeepSeek Harness implementation checkout",
+    "Current DeepSeek Harness Web GUI URL", "Current working directory",
+    "Current DSH file policy", "Browser time zone for this request",
+    "Elapsed since the preceding", "preparing turn", "Approval requests are auto-granted",
+    "request sandbox escalation", "no approval prompt will appear",
+    "<project_instructions>", "</project_instructions>", "<system_instructions>",
+]
+
 func stripContext(_ s: String) -> String {
+    // 1) 丢掉指令块
     var t = s
-    for marker in ["<project_instructions>", "<system_instructions>"] {
-        if let r = t.range(of: marker, options: .backwards) { t = String(t[r.upperBound...]) }
+    if let r = t.range(of: "</project_instructions>") { t = String(t[r.upperBound...]) }
+    // 2) 按段落过滤噪音
+    let paras = t.components(separatedBy: "\n\n")
+    let kept = paras.filter { p in
+        let trimmed = p.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return false }
+        return !kNoiseMarkers.contains { trimmed.contains($0) }
     }
-    // 去掉常见的上下文前缀段
-    let noise = ["preparing turn", "Current runtime context.", "Browser time zone for this request",
-                 "Elapsed since the preceding", "Current working directory", "Current DSH file policy",
-                 "Approval requests are auto-granted"]
-    let lines = t.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-    var kept: [String] = []
-    var skipping = false
-    for line in lines {
-        if noise.contains(where: { line.contains($0) }) { skipping = true; continue }
-        if skipping && line.trimmingCharacters(in: .whitespaces).isEmpty { skipping = false; continue }
-        if !skipping { kept.append(line) }
+    // 3) 逐行兜底（噪音可能和其他内容同段）
+    var lines: [String] = []
+    for p in kept {
+        for line in p.components(separatedBy: "\n") {
+            if kNoiseMarkers.contains(where: { line.contains($0) }) { continue }
+            lines.append(line)
+        }
     }
-    let out = kept.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-    return out.isEmpty ? t.trimmingCharacters(in: .whitespacesAndNewlines) : out
+    return lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
 // MARK: - Store
@@ -248,16 +258,13 @@ final class ChatStore: ObservableObject {
             case "user/message":
                 let raw = ((d["content"] as? [[String: Any]]) ?? []).compactMap { $0["text"] as? String }.joined()
                 let t = stripContext(raw)
-                if !t.isEmpty, !raw.contains("preparing turn") { out.append(ChatItem(id: id, kind: .user, text: t)) }
-                else if !t.isEmpty, !t.contains("preparing turn") { out.append(ChatItem(id: id, kind: .user, text: t)) }
+                if !t.isEmpty { out.append(ChatItem(id: id, kind: .user, text: t)) }
             case "assistant/message":
                 let msg = d["message"] as? [String: Any] ?? [:]
                 let t = ((msg["content"] as? [[String: Any]]) ?? [])
                     .compactMap { p in (p["type"] as? String) == "text" ? (p["text"] as? String) : nil }.joined()
                 let trimmed = stripContext(t)
-                if !trimmed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    out.append(ChatItem(id: id, kind: .assistant, text: trimmed))
-                }
+                if !trimmed.isEmpty { out.append(ChatItem(id: id, kind: .assistant, text: trimmed)) }
             case "tool/call":
                 let callId = d["callId"] as? String ?? ""
                 let r = results[callId]
