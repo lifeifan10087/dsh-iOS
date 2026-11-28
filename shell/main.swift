@@ -77,16 +77,46 @@ final class ShellViewController: UIViewController, WKNavigationDelegate, WKUIDel
             dshlog("using \(u.absoluteString.prefix(40))")
             defaults.set(u.absoluteString, forKey: urlKey)
             hideEntryForm()
-            web.load(URLRequest(url: u))
+            bootstrap(tokenURL: u)
             return
         }
         if let s = defaults.string(forKey: urlKey), let u = URL(string: s), u.scheme != nil {
             hideEntryForm()
-            web.load(URLRequest(url: u))
+            bootstrap(tokenURL: u)
             return
         }
         dshlog("no url found, showing form")
         showEntryForm("没有找到引擎地址。先在手机上跑：\nsh /var/mobile/Library/dsh/start-engine.sh\n然后把带 token 的地址粘进来：")
+    }
+
+    /// 先用 URLSession 请求带 token 的地址（不跟随跳转），把 Set-Cookie 塞进
+    /// WKWebView 的 cookie store，再打开首页。否则 SPA 的插件包请求拿不到会话，
+    /// 会一直停在 "Loading plugins…"（Safari 里能正常，是因为它自己管 cookie）。
+    private func bootstrap(tokenURL: URL) {
+        dshlog("bootstrap \(tokenURL.absoluteString.prefix(40))")
+        var req = URLRequest(url: tokenURL)
+        req.httpShouldHandleCookies = false
+        req.cachePolicy = .reloadIgnoringLocalCacheData
+        URLSession.shared.dataTask(with: req) { [weak self] _, resp, err in
+            guard let self else { return }
+            if let e = err { dshlog("bootstrap err \(e.localizedDescription)") }
+            var cookies: [HTTPCookie] = []
+            if let http = resp as? HTTPURLResponse {
+                dshlog("bootstrap status \(http.statusCode)")
+                if let fields = http.allHeaderFields as? [String: String] {
+                    cookies = HTTPCookie.cookies(withResponseHeaderFields: fields, for: tokenURL)
+                }
+            }
+            dshlog("bootstrap cookies=\(cookies.count)")
+            let finish = {
+                DispatchQueue.main.async {
+                    let home = URL(string: "http://127.0.0.1:3080/")!
+                    self.web.load(URLRequest(url: home))
+                }
+            }
+            if cookies.isEmpty { finish(); return }
+            WKWebsiteDataStore.default().httpCookieStore.setCookies(cookies) { finish() }
+        }.resume()
     }
 
     // —— 内联输入框（替代 alert）——
