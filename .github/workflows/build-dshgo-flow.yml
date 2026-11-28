@@ -80,6 +80,8 @@ jobs:
                f"final _attachToken = TextEditingController(text: '{token}');"),
               ("late SshDshMode _dshMode = widget.existing?.dshMode ?? SshDshMode.managed;",
                "late SshDshMode _dshMode = widget.existing?.dshMode ?? SshDshMode.attachOnly;"),
+              ("late final _remotePort = TextEditingController(text: '${widget.existing?.remotePort ?? 3080}');",
+               "late final _remotePort = TextEditingController(text: '${widget.existing?.remotePort ?? 3081}');"),
           ]
           hit = 0
           for a, b in reps:
