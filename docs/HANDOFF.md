@@ -250,6 +250,27 @@ curl -s -o /dev/null -w '%{http_code}\n' -b "$cookie" http://127.0.0.1:3080/redt
 - root 执行：`printf '%s\n' "$IPHONE_PASS" | sshpass -e ssh ... 'sudo -S -p "" ...'`；
   不要同时用 heredoc 喂数据（会抢走 sudo 的 stdin）。
 
+## 固定入口：本地反向代理（2026-11-28 10:45）
+
+问题：dsh 每次启动都生成新 token，宿主 App 只能读文件拿 URL；而 TrollStore 装的 App 是
+**沙盒的**（容器 `0357C63A-…`），读不到 `/var/mobile/Library/dsh/.web-url` 与
+`/var/mobile/Documents/dsh-url.txt`，于是引擎一重启就得重新配对。
+
+解法：`mcp/auth-proxy.mjs` —— 监听 `127.0.0.1:3081`，自己拿 `.web-url` 去引擎换 cookie
+（拦下 303 只取 Set-Cookie，5 分钟缓存，遇 401 立刻重换），把 HTTP 与 WebSocket 升级都透传。
+
+- 宿主 App 固定打开 `http://127.0.0.1:3081/`（`shell/main.swift` 里 `proxyURL`，
+  启动时先 `probeProxy()` 探活，失败才退回 token 文件/输入框）
+- `boot-start.sh` 负责拉起代理（幂等，已有进程就不重复起）
+- 实测：`/` → 200（40 KB，含 purge）· `/redteam/api` → 405 · App 日志 `probeProxy ok=true`
+
+附带好处：引擎重启、token 变化、甚至 `.web-url` 被删，App 都不需要重新配对。
+
+### 看图能力（结论）
+`view_screen` 会以 MCP image 内容块返回截图，链路已通；但当前模型 `deepseek-v4-flash`
+**不声明图像输入**，宿主会把图片换成占位文字，agent 自动退回 `ocr`（实测能准确描述界面）。
+换支持视觉的模型即可直读，代码侧无需改动。
+
 ## 关键坐标
 
 | 项 | 值 |
