@@ -35,11 +35,19 @@ final class ShellViewController: UIViewController, WKNavigationDelegate, WKUIDel
         let cfg = WKWebViewConfiguration()
         cfg.allowsInlineMediaPlayback = true
         cfg.preferences.setValue(true, forKey: "developerExtrasEnabled")
-        web = WKWebView(frame: view.bounds, configuration: cfg)
-        web.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        // 用 Auto Layout 铺满：viewDidLoad 阶段 view.bounds 可能是 0，
+        // 用 frame 会导致 webview 尺寸为 0 —— 进程都在、界面全灰、也不报错。
+        web = WKWebView(frame: .zero, configuration: cfg)
+        web.translatesAutoresizingMaskIntoConstraints = false
         web.navigationDelegate = self
         web.uiDelegate = self
         view.addSubview(web)
+        NSLayoutConstraint.activate([
+            web.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            web.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            web.topAnchor.constraint(equalTo: view.topAnchor),
+            web.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+        ])
         UIApplication.shared.isIdleTimerDisabled = true
         dshlog("viewDidLoad start")
         loadEntry()
@@ -154,6 +162,10 @@ final class ShellViewController: UIViewController, WKNavigationDelegate, WKUIDel
     func webView(_ w: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         dshlog("didFail: \(error.localizedDescription)")
         showEntryForm("加载失败：\(error.localizedDescription)")
+    }
+
+    func webView(_ w: WKWebView, didFinish navigation: WKNavigation!) {
+        dshlog("didFinish url=\(w.url?.absoluteString.prefix(50) ?? "?")")
     }
 
     // 外部 http 链接交给系统
