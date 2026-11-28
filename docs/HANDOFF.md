@@ -343,6 +343,25 @@ postinst 顺序：解包 → **apply-patches --quiet** → 起守护 → **smoke
 **规则**：刷新应用注册只用 `uicache -a` + respring，不要 `uicache -p` 配 `killall lsd`。
 另外 `shareddocuments://` 跳转会把宿主 App 的 Safari 页面带到文件预览，演示后要重启宿主 App。
 
+## 「在文件夹中显示」在 iOS 上必失败（2026-11-28 12:45，已修）
+
+现象：iOS 界面点文件的「在文件夹中显示」→ 提示 **无法显示文件位置，请重试**（前端 key `path.revealError`）。
+
+根因：`@deepseek-ai/dsh-native-command` 的 `revealNativePath()` 按平台分派，
+`darwin` 分支执行 `open -R <path>`（macOS Finder 专用），iOS 没有 `open` → 抛错。
+我们的 preload 把 platform 谎报成 darwin，正好走进这个分支。
+
+修法：`deploy/device/patch-reveal-ios.mjs` 在 `revealNativePath` 开头插入 iOS 分支：
+`(process.platform === "darwin" || "ios") && 存在 /var/jb` 时：
+- 目标在宿主 App 容器 `Documents` 内 → `uiopen shareddocuments://private<目录>`
+- 目标在工作区 → 先 `copyFileSync` 到容器 Documents，再跳过去
+备份 `.debpatch.bak`；已并入 `apply-patches.sh`（升级后自动补回）。
+
+验证：直接调用 `revealNativePath()` → 文件 App 落在 **DSH GO** 文件夹 ✔；
+引擎重启后 smoke-test PASS。接口 `/api/session/openWorkspacePath` 的 typert 信封是
+`{type:"client-request", rpcId, method:"session/openWorkspacePath", payload:{args:{request:{path,action}}}}`，
+手搓调用会因缺会话上下文被 `Path has no verified Host path` 拦，属正常。
+
 ## 关键坐标
 
 | 项 | 值 |
