@@ -22,6 +22,8 @@ func dshlog(_ msg: String) {
 final class ShellViewController: UIViewController, UITextFieldDelegate {
     private let defaults = UserDefaults.standard
     private let urlKey = "dsh.web.url"
+    private var currentToken = ""
+    private var safariVC: SFSafariViewController?
     private var field: UITextField?
     private var opened = false
 
@@ -43,9 +45,37 @@ final class ShellViewController: UIViewController, UITextFieldDelegate {
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        guard !opened else { return }
-        opened = true
-        if let u = resolveURL() { open(u) } else { showForm("没找到引擎地址。先在手机上跑：\nsh /var/mobile/Library/dsh/start-engine.sh\n然后把带 token 的地址粘进来：") }
+        if !opened {
+            opened = true
+            if let u = resolveURL() { open(u); return } else {
+                showForm("没找到引擎地址。先在手机上跑：\nsh /var/mobile/Library/dsh/start-engine.sh\n然后把带 token 的地址粘进来：")
+                return
+            }
+        }
+        maybeReloadForNewToken()
+    }
+
+    /// 引擎重启后 token 会变（dsh 每次启动随机生成）。回到前台时比对 .web-url，
+    /// 变了就静默重开，省掉“手动重新配对”这一步。
+    private func maybeReloadForNewToken() {
+        guard let fresh = tokenURL(), fresh != currentToken else { return }
+        dshlog("token changed -> reload")
+        currentToken = fresh
+        defaults.set(fresh, forKey: urlKey)
+        safariVC?.dismiss(animated: false) { [weak self] in
+            guard let self, let u = URL(string: fresh) else { return }
+            self.open(u)
+        }
+    }
+
+    private func tokenURL() -> String? {
+        for path in urlCandidates {
+            if let s = try? String(contentsOfFile: path, encoding: .utf8) {
+                let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+                if t.hasPrefix("http"), let u = URL(string: t), u.scheme != nil { return u.absoluteString }
+            }
+        }
+        return defaults.string(forKey: urlKey)
     }
 
     private func resolveURL() -> URL? {
@@ -55,6 +85,7 @@ final class ShellViewController: UIViewController, UITextFieldDelegate {
             if let u = URL(string: t), u.scheme != nil {
                 dshlog("using \(u.absoluteString.prefix(40))")
                 defaults.set(u.absoluteString, forKey: urlKey)
+                currentToken = u.absoluteString
                 return u
             }
             dshlog("bad url in \(path)")
@@ -76,6 +107,7 @@ final class ShellViewController: UIViewController, UITextFieldDelegate {
         vc.dismissButtonStyle = .close
         vc.delegate = self
         vc.modalPresentationStyle = .fullScreen
+        safariVC = vc
         present(vc, animated: false) {
             dshlog("safari vc presented")
         }
