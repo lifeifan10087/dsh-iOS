@@ -12,6 +12,9 @@ LOG=/var/mobile/Library/Logs/dsh-engine.log
 # launchd 默认 PATH 不含 /var/jb/usr/bin，导致引擎 spawn osascript/zenity 之类一律 ENOENT
 # （典型症状：「选择文件夹」报 directory picker failed: spawn osascript ENOENT）
 export PATH="/var/jb/usr/bin:/var/jb/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+# 关键：不设 DSH_HOME 时 dsh 按 $HOME/.dsh 解析，rootless 下变成 /var/jb/var/root/.dsh，
+# 于是 profiles/ 与 node_modules 全指向另一个空目录 —— 表现为「插件装了但没生效」。
+export DSH_HOME=/var/mobile/Library/dsh
 
 # 模型凭证等环境变量放这里（600），有就用
 if [ -f /var/mobile/Library/dsh/env.sh ]; then
@@ -39,8 +42,13 @@ fi
 
 MARK="=== dsh start $(date +%s) ==="
 echo "$MARK" >>"$LOG"
+# profile 自带的 cordis.patch.yml 在这台机器上没有生效（--dump-config 不含用户层，
+# 实测启动后插件路由 404），所以把补丁文件显式作为 --patch 层传进去。
+PATCHF=/var/mobile/Library/dsh/profiles/web/cordis.patch.yml
+PATCHARG=""
+[ -f "$PATCHF" ] && PATCHARG="--patch $PATCHF"
 nohup "$NODE" --jitless --max-old-space-size=1024 --require "$PRE" --expose-internals \
-  --experimental-sqlite "$APP" web --host 127.0.0.1 --port 3080 --no-open >>"$LOG" 2>&1 &
+  --experimental-sqlite "$APP" --profile web $PATCHARG --host 127.0.0.1 --port 3080 --no-open >>"$LOG" 2>&1 &
 echo $! > "$PIDF"
 echo "spawned $!"
 
