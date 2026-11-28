@@ -41,6 +41,24 @@ jobs:
         working-directory: src/app
         run: flutter pub get
 
+      - name: Patch iOS layout (bottom padding for home indicator)
+        working-directory: src/app
+        run: |
+          python3 - <<'PYEOF'
+          import re, pathlib
+          f = pathlib.Path('lib/ui/shell/page_frame.dart')
+          s = f.read_text()
+          before = s
+          # 底部留白从「安全区 + 32」加到「安全区 + 120」，避免最后一项落在 Home 指示条手势区
+          s = s.replace('SizedBox(height: padding.bottom + 32)',
+                        'SizedBox(height: padding.bottom + 120)')
+          if s == before:
+              print('WARN: pattern not found, layout unchanged')
+          f.write_text(s)
+          print('patched page_frame.dart:', 'padding.bottom + 120' in s)
+          PYEOF
+          git diff --stat || true
+
       - name: Build iOS (no codesign)
         working-directory: src/app
         run: flutter build ios --release --no-codesign
