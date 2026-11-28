@@ -150,6 +150,32 @@ uiopen "apple-magnifier://install?url=http://HOST_IP:8899/DshGo.ipa"
 > 同 bundle id 若已被手工装过（/var/jb/Applications/DshGo.app），TrollStore 会报 **Error 179**，
 > 先 `rm -rf /var/jb/Applications/DshGo.app && uicache -a` 再装。
 
+## 目录选择器（2026-11-28 08:50，已修）
+
+症状：网页端点「+ 添加工作区…」弹 **无法打开文件夹 / directory picker failed: spawn osascript ENOENT**。
+
+三处原因，缺一不可修：
+1. 引擎按 `process.platform` 走分支，我们 preload 把它伪装成 `darwin` → 走 macOS 的 `osascript`
+   （`@deepseek-ai/dsh-api-workspace-controller/lib/types/default-directory.js` 与
+   `@deepseek-ai/dsh-host-directory-picker-native/lib/index.js`：`osascript -l JavaScript -e <面板脚本> "Select Workspace Directory"`）
+2. iOS 没有 `osascript`，而且 **iOS 的 node 不能 spawn 脚本**（EPERM）→ shim 必须是 Mach-O
+3. launchd 拉起的引擎 **PATH 不含 `/var/jb/usr/bin`** → 装了也找不到
+
+修法：
+- `launcher/osascript.c` → CI（build-jitlaunch）编出 iOS arm64 的 `osascript`，装到 `/var/jb/usr/bin/osascript`
+  - `path to documents folder` → 打印 `/var/mobile/Documents`
+  - 选择面板（`-l JavaScript` / `choose folder`）→ 打印 `$DSH_PICK_DIR`，默认 `/var/mobile/Documents/dsh-workspace`（自动 mkdir）
+  - 其它调用 → 空输出、退出 0（等价取消）
+- `deploy/device/install-osascript.sh` 负责安装+自检
+- `deploy/device/boot-start.sh` 里 `export PATH="/var/jb/usr/bin:/var/jb/usr/local/bin:..."`；`env.sh` 也补了 PATH
+- deb 构建已把 shim 打包到 `usr/bin/osascript`
+
+验证：`node -e 'require("child_process").execFileSync("osascript",["-l","JavaScript","-e","x","Select Workspace Directory"])'`
+→ 打印 `/var/mobile/Documents/dsh-workspace`
+
+> 局限：iOS 上没有系统文件夹选择面板，所以「选择文件夹」被模拟成固定工作目录；
+> 要换目录就设 `DSH_PICK_DIR`（写进 `/var/mobile/Library/dsh/env.sh`）。
+
 ## 关键坐标
 
 | 项 | 值 |
