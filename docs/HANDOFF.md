@@ -176,6 +176,36 @@ uiopen "apple-magnifier://install?url=http://HOST_IP:8899/DshGo.ipa"
 > 局限：iOS 上没有系统文件夹选择面板，所以「选择文件夹」被模拟成固定工作目录；
 > 要换目录就设 `DSH_PICK_DIR`（写进 `/var/mobile/Library/dsh/env.sh`）。
 
+## DSH_HOME 必须显式设置（2026-11-28 09:23，最重要的一个坑）
+
+症状：插件装了、`package.json`/`cordis.patch.yml` 都对，界面里却完全没有（purge 胶囊消失、
+`purge_*` 工具不存在、MCP 工具也没有），启动日志还**不报错**。
+
+原因：`dsh` 在没设 `DSH_HOME` 时按 `$HOME/.dsh` 解析；我们是以 root 起引擎，于是变成
+rootless 下的 **`/var/jb/var/root/.dsh`**，跟我们维护的 `/var/mobile/Library/dsh/profiles` 是
+两个不同目录 —— 补丁层、`node_modules` 全在那个空目录里，等于什么都没装。
+
+只有把 `--profile web`（或任何 profile）显式给出来时才会暴露真错误：
+```
+dsh-purge (dsh-purge): failed to import: Cannot find package 'dsh-purge'
+  imported from /var/jb/var/root/.dsh/profiles/web/
+```
+
+修法：`boot-start.sh` 与 `env.sh` 都加 `export DSH_HOME=/var/mobile/Library/dsh`，再重启。
+
+验证方法（不看界面就能判断插件是否真活）：
+```sh
+# 取 cookie
+u=$(cat /var/mobile/Library/dsh/.web-url)
+# 插件控制台路由：405 = 已注册（GET 不是合法方法），404 = 插件没挂
+curl -s -o /dev/null -w '%{http_code}\n' -b "$cookie" http://127.0.0.1:3080/redteam/api
+# 页面 HTML 里出现 purge = 注入生效
+```
+
+排查期间的两个次要结论：
+- `dsh --dump-config` **默认不含用户补丁层**，所以“树里没有某插件”不能作为未安装的证据。
+- `--patch <file>` 显式传入是有效的，可用于区分「补丁内容问题」和「补丁层没被读到」。
+
 ## 关键坐标
 
 | 项 | 值 |
