@@ -441,8 +441,9 @@ struct Drawer: View {
             HStack {
                 Text("会话").font(.headline)
                 Spacer()
-                Button { Task { await store.newChat(); store.drawOpen = false } } label: { Image(systemName: "square.and.pencil") }
-                Button { store.drawOpen = false } label: { Image(systemName: "xmark") }.padding(.leading, 10)
+                Button { showSettings = true } label: { Image(systemName: "slider.horizontal.3") }
+                Button { Task { await store.newChat(); store.drawOpen = false } } label: { Image(systemName: "square.and.pencil") }.padding(.leading, 8)
+                Button { store.drawOpen = false } label: { Image(systemName: "xmark") }.padding(.leading, 8)
             }.padding()
             List {
                 ForEach(groups, id: \.0) { g in
@@ -451,8 +452,10 @@ struct Drawer: View {
                     }
                 }
                 Section {
-                    Button { showSettings = true } label: { Label("界面设置", systemImage: "paintpalette") }
-                    Button { store.drawOpen = false } label: { Label("网页版（兜底）", systemImage: "safari") }
+                    Button {
+                        store.drawOpen = false
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { UIApplication.shared.open(kWebFallback) }
+                    } label: { Label("在 Safari 中打开", systemImage: "safari") }
                 }
             }.listStyle(.insetGrouped)
         }
