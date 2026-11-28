@@ -165,7 +165,13 @@ final class ShellViewController: UIViewController, WKNavigationDelegate, WKUIDel
     }
 
     func webView(_ w: WKWebView, didFinish navigation: WKNavigation!) {
-        dshlog("didFinish url=\(w.url?.absoluteString.prefix(50) ?? "?")")
+        dshlog("didFinish url=\(w.url?.absoluteString.prefix(50) ?? "?") title=\(w.title ?? "nil")")
+        w.evaluateJavaScript("(document.body ? document.body.innerText.slice(0,120) : 'nobody') + ' || html=' + (document.documentElement ? document.documentElement.outerHTML.length : 0)") { v, e in
+            dshlog("probe: \(e.map { "err \($0.localizedDescription)" } ?? String(describing: v))")
+            w.evaluateJavaScript("window.innerWidth + 'x' + window.innerHeight") { s, _ in
+                dshlog("viewport: \(s.map { String(describing: $0) } ?? "?")")
+            }
+        }
     }
 
     // 外部 http 链接交给系统
