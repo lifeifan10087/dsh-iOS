@@ -271,6 +271,27 @@ curl -s -o /dev/null -w '%{http_code}\n' -b "$cookie" http://127.0.0.1:3080/redt
 **不声明图像输入**，宿主会把图片换成占位文字，agent 自动退回 `ocr`（实测能准确描述界面）。
 换支持视觉的模型即可直读，代码侧无需改动。
 
+## 对话链路修复（2026-11-28 11:08，实测通过）
+
+界面能显示 ≠ 能对话。这一轮把「发消息不出回复」的三处原因找齐了：
+
+1. **`--profile web --patch <file>` 破坏了 profile 组合** —— 那是发现 `DSH_HOME` 指错之前的绕过手段。
+   `DSH_HOME` 修好后 profile 自带的 `cordis.patch.yml` 会正常生效，再加 `--patch` 反而让会话/模型服务起不来。
+   症状：界面能开，但「正在加载模型…」「载入历史⋯」永远转圈，发出去的消息没有回复。
+   修法：`boot-start.sh` 恢复成 `dsh web --host … --port 3080 --no-open`。
+   > 验证：Safari 直连 token 地址，一轮对话 1 秒返回（`我是小码酱…当前工作区 /private/var/mobile/Documents/dsh-workspace`）。
+
+2. **代理丢了 `Connection: Upgrade`** —— `upstreamHeaders()` 里 `delete h.connection` 对普通请求没问题，
+   但 WebSocket 升级请求少了这个头，上游不返回 101，前端所有流式/历史/模型列表全挂。
+   修法：升级分支显式写回 `connection: Upgrade` 与 `upgrade: websocket`。
+
+3. **旧 cookie 抢占** —— 浏览器还会带上一代引擎留下的 `dsh-auth-*` cookie，它排在注入的 cookie 前面，
+   服务端取到无效的那个 → 「首页 200、写接口 401」（`/api/workspace/create` 401 就是这么来的）。
+   修法：注入前先剔掉客户端的所有 `dsh-auth-*`。
+
+实测（App 内，走 127.0.0.1:3081 代理）：输入「App 内测试：回一句「App 正常」」→ **1 秒**返回「App 正常」，
+状态栏 `1轮1步 · 308… · 25K tok · 缓存命中`。
+
 ## 关键坐标
 
 | 项 | 值 |
