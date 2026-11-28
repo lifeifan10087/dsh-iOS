@@ -89,39 +89,42 @@ final class ShellViewController: UIViewController, WKNavigationDelegate, WKUIDel
         showEntryForm("没有找到引擎地址。先在手机上跑：\nsh /var/mobile/Library/dsh/start-engine.sh\n然后把带 token 的地址粘进来：")
     }
 
-    /// 先用 URLSession 请求带 token 的地址（不跟随跳转），把 Set-Cookie 塞进
-    /// WKWebView 的 cookie store，再打开首页。否则 SPA 的插件包请求拿不到会话，
-    /// 会一直停在 "Loading plugins…"（Safari 里能正常，是因为它自己管 cookie）。
+    /// 先用 URLSession 请求带 token 的地址，**拦下 303 不跟随**，只取 Set-Cookie，
+    /// 写进 WKWebView 的 cookie store，再打开首页。
+    /// （不拦的话 URLSession 会跟着跳到 /，而那一跳没带 cookie → 401，
+    ///    SPA 的插件包也就拿不到会话，界面会一直停在 "Loading plugins…"）
     private func bootstrap(tokenURL: URL) {
         dshlog("bootstrap \(tokenURL.absoluteString.prefix(40))")
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
+        let session = URLSession(configuration: cfg, delegate: RedirectCatcher.shared, delegateQueue: nil)
         var req = URLRequest(url: tokenURL)
         req.httpShouldHandleCookies = false
-        req.cachePolicy = .reloadIgnoringLocalCacheData
-        URLSession.shared.dataTask(with: req) { [weak self] _, resp, err in
+        RedirectCatcher.shared.onRedirect = { [weak self] response in
             guard let self else { return }
-            if let e = err { dshlog("bootstrap err \(e.localizedDescription)") }
             var cookies: [HTTPCookie] = []
-            if let http = resp as? HTTPURLResponse {
-                dshlog("bootstrap status \(http.statusCode)")
-                if let fields = http.allHeaderFields as? [String: String] {
-                    cookies = HTTPCookie.cookies(withResponseHeaderFields: fields, for: tokenURL)
-                }
+            if let fields = response.allHeaderFields as? [String: String] {
+                cookies = HTTPCookie.cookies(withResponseHeaderFields: fields, for: tokenURL)
             }
-            dshlog("bootstrap cookies=\(cookies.count)")
-            let finish = {
-                DispatchQueue.main.async {
-                    let home = URL(string: "http://127.0.0.1:3080/")!
-                    self.web.load(URLRequest(url: home))
-                }
-            }
-            if cookies.isEmpty { finish(); return }
+            dshlog("bootstrap status \(response.statusCode) cookies=\(cookies.count)")
             let store = WKWebsiteDataStore.default().httpCookieStore
             let group = DispatchGroup()
-            for c in cookies {
-                group.enter()
-                store.setCookie(c) { group.leave() }
+            for c in cookies { group.enter(); store.setCookie(c) { group.leave() } }
+            group.notify(queue: .main) {
+                self.web.load(URLRequest(url: URL(string: "http://127.0.0.1:3080/")!))
             }
-            group.notify(queue: .main) { finish() }
+        }
+        session.dataTask(with: req) { [weak self] _, resp, err in
+            guard let self else { return }
+            if let e = err { dshlog("bootstrap err \(e.localizedDescription)") }
+            if let http = resp as? HTTPURLResponse, http.statusCode != 200 {
+                dshlog("bootstrap final \(http.statusCode)")
+            }
+            DispatchQueue.main.async {
+                if self.web.url == nil {
+                    self.web.load(URLRequest(url: URL(string: "http://127.0.0.1:3080/")!))
+                }
+            }
         }.resume()
     }
 
@@ -216,6 +219,19 @@ final class ShellViewController: UIViewController, WKNavigationDelegate, WKUIDel
         guard let u = action.request.url, let h = u.host else { return decisionHandler(.allow) }
         if h == "127.0.0.1" || h == "localhost" { return decisionHandler(.allow) }
         UIApplication.shared.open(u); decisionHandler(.cancel)
+    }
+}
+
+// 拦下 303：只取 Set-Cookie，不让 URLSession 自己跳
+final class RedirectCatcher: NSObject, URLSessionTaskDelegate {
+    static let shared = RedirectCatcher()
+    var onRedirect: ((HTTPURLResponse) -> Void)?
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest,
+                    completionHandler: @escaping (URLRequest?) -> Void) {
+        onRedirect?(response)
+        completionHandler(nil)   // 不跟随
     }
 }
 
