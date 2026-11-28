@@ -224,7 +224,41 @@ final class ShellViewController: UIViewController, WKNavigationDelegate, WKUIDel
         showEntryForm("加载失败：\(error.localizedDescription)")
     }
 
+    private func probeEnvironment(_ w: WKWebView) {
+        let js = """
+        (function(){
+          var out = {
+            secure: window.isSecureContext,
+            subtle: !!(window.crypto && window.crypto.subtle),
+            ls: (function(){ try { localStorage.setItem('t','1'); localStorage.removeItem('t'); return 'ok'; } catch(e) { return 'fail:'+e.name; } })(),
+            idb: !!window.indexedDB,
+            sw: !!(navigator.serviceWorker),
+            ua: navigator.userAgent,
+            root: (document.getElementById('root')||document.body).children.length,
+            text: (document.body.innerText||'').slice(0,80)
+          };
+          return JSON.stringify(out);
+        })();
+        """
+        w.evaluateJavaScript(js) { v, e in
+            dshlog("env: \(e.map { "err \($0.localizedDescription)" } ?? String(describing: v))")
+        }
+        // 12 秒后如果页面还是空壳，直接交给 Safari（Safari 里是能正常渲染的）
+        DispatchQueue.main.asyncAfter(deadline: .now() + 12) { [weak self] in
+            guard let self else { return }
+            self.web.evaluateJavaScript("(document.body.innerText||'').trim().length") { v, _ in
+                let n = (v as? NSNumber)?.intValue ?? 0
+                dshlog("fallback check textLen=\(n)")
+                if n < 5, let u = self.defaults.string(forKey: self.urlKey), let url = URL(string: u) {
+                    dshlog("fallback -> Safari")
+                    UIApplication.shared.open(url)
+                }
+            }
+        }
+    }
+
     func webView(_ w: WKWebView, didFinish navigation: WKNavigation!) {
+        probeEnvironment(w)
         dshlog("didFinish url=\(w.url?.absoluteString.prefix(50) ?? "?") title=\(w.title ?? "nil")")
         w.evaluateJavaScript("(document.body ? document.body.innerText.slice(0,120) : 'nobody') + ' || html=' + (document.documentElement ? document.documentElement.outerHTML.length : 0)") { v, e in
             dshlog("probe: \(e.map { "err \($0.localizedDescription)" } ?? String(describing: v))")
