@@ -18,6 +18,22 @@
 Object.defineProperty(process, "platform", { value: "darwin", configurable: true });
 Object.defineProperty(process, "arch", { value: "arm64", configurable: true });
 
+// 光改 process.platform 不够：sharp 之类用 os.platform() 判定运行时，
+// 会认成 ios-arm64 然后报 "Could not load the sharp module"。
+// node:os 是内置模块，这里在它被首次 require 时再包一层（懒加载，避免过早拉模块）。
+const Module = require("node:module");
+const origLoad = Module._load;
+Module._load = function (request, parent, isMain) {
+  const mod = origLoad.call(this, request, parent, isMain);
+  if (request === "node:os" || request === "os") {
+    try {
+      Object.defineProperty(mod, "platform", { value: () => "darwin", configurable: true });
+      Object.defineProperty(mod, "type", { value: () => "Darwin", configurable: true });
+    } catch {}
+  }
+  return mod;
+};
+
 require("./wasm-fake.cjs");
 
 const { install } = require("./fetch-http.cjs");
