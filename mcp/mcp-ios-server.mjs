@@ -15,7 +15,7 @@
 //
 // 依赖：tweak 的 127.0.0.1:8090/mcp（HTTP）；不依赖任何 npm 包。
 
-import { execFile, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync, statSync, openSync, readSync, closeSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -183,21 +183,102 @@ function appDirs() {
   ].filter((d) => existsSync(d));
 }
 
+// —— 最小 bplist 解析（只为了拿 CFBundleIdentifier；设备上 defaults 会卡死）——
+function parseBPlist(buf) {
+  if (buf.length < 40) return null;
+  const trailer = buf.subarray(buf.length - 32);
+  const offsetSize = trailer[6];
+  const refSize = trailer[7];
+  const numObjects = Number(trailer.readBigUInt64BE(8));
+  const topObject = Number(trailer.readBigUInt64BE(16));
+  const tableOffset = Number(trailer.readBigUInt64BE(24));
+  if (!numObjects || tableOffset <= 0 || tableOffset >= buf.length) return null;
+  const offsets = [];
+  for (let i = 0; i < numObjects; i++) {
+    const o = tableOffset + i * offsetSize;
+    if (o + offsetSize > buf.length) return null;
+    let v = 0;
+    for (let k = 0; k < offsetSize; k++) v = v * 256 + buf[o + k];
+    offsets.push(v);
+  }
+  const lenAt = (off) => {
+    const info = buf[off] & 0x0f;
+    if (info !== 0x0f) return { len: info, extra: 0 };
+    const im = buf[off + 1];
+    const n = 1 << (im & 0x0f);           // 1/2/4/8 字节
+    let v = 0;
+    for (let k = 0; k < n; k++) v = v * 256 + buf[off + 2 + k];
+    return { len: v, extra: n + 1 };
+  };
+  const readObj = (idx) => {
+    const off = offsets[idx];
+    if (off === undefined || off >= buf.length) return null;
+    const marker = buf[off];
+    const type = marker >> 4;
+    const L = lenAt(off);
+    const info = L.len;
+    const body = off + 1 + L.extra;
+    if (type === 0x0) return null;                       // null/bool/fill
+    if (type === 0x1) return buf.readUIntBE(off + 1, 1 << info); // int
+    if (type === 0x2) return info === 2 ? buf.readFloatBE(off + 1) : buf.readDoubleBE(off + 1);
+    if (type === 0x5) return buf.subarray(body, body + info).toString("latin1"); // ASCII
+    if (type === 0x6) return Buffer.from(buf.subarray(body, body + info * 2)).swap16().toString("utf16le");
+    if (type === 0x8) return { uid: buf.readUIntBE(off + 1, info + 1) };
+    if (type === 0xa || type === 0xc) {                  // array / set
+      const base = body;
+      const refs = [];
+      for (let i = 0; i < info; i++) {
+        let v = 0;
+        for (let k = 0; k < refSize; k++) v = v * 256 + buf[base + i * refSize + k];
+        refs.push(v);
+      }
+      return refs;
+    }
+    if (type === 0xd) {                                  // dict
+      const base = body;
+      const keyRefs = [], valRefs = [];
+      for (let i = 0; i < info; i++) {
+        let k1 = 0, k2 = 0;
+        for (let k = 0; k < refSize; k++) k1 = k1 * 256 + buf[base + i * refSize + k];
+        for (let k = 0; k < refSize; k++) k2 = k2 * 256 + buf[base + info * refSize + i * refSize + k];
+        keyRefs.push(k1); valRefs.push(k2);
+      }
+      const out = {};
+      for (let i = 0; i < keyRefs.length; i++) out[readObj(keyRefs[i])] = valRefs[i];
+      return out;
+    }
+    return null;
+  };
+  const root = readObj(topObject);
+  if (!root || typeof root !== "object" || Array.isArray(root)) return null;
+  const resolve = (v) => (typeof v === "number" ? readObj(v) : v);
+  const out = {};
+  for (const [k, v] of Object.entries(root)) out[k] = resolve(v);
+  return out;
+}
+
+function bundleIdOf(appPath) {
+  const p = join(appPath, "Info.plist");
+  try {
+    const buf = readFileSync(p);
+    if (buf.subarray(0, 6).toString("latin1") === "bplist") {
+      const d = parseBPlist(buf);
+      if (d && typeof d.CFBundleIdentifier === "string") return d.CFBundleIdentifier;
+    } else {
+      const m = buf.toString("utf8").match(/<key>CFBundleIdentifier<\/key>\s*<string>([^<]+)<\/string>/);
+      if (m) return m[1];
+    }
+  } catch {}
+  return "";
+}
+
 function scanApps() {
   const apps = [];
   const seen = new Set();
   const push = (name, path) => {
     if (!name || seen.has(path)) return;
     seen.add(path);
-    let bundleId = "";
-    try {
-      const p = join(path, "Info.plist");
-      const buf = readFileSync(p);
-      const s = buf.toString("latin1");
-      const m = s.match(/CFBundleIdentifier[\s\S]{0,12}?([A-Za-z0-9._-]{3,80})/);
-      bundleId = m ? m[1] : "";
-    } catch {}
-    apps.push({ name: name.replace(/\.app$/, ""), bundleId, path });
+    apps.push({ name: name.replace(/\.app$/, ""), bundleId: bundleIdOf(path), path });
   };
   for (const root of appDirs()) {
     let entries = [];
@@ -277,6 +358,7 @@ async function screenshotToFile({ prefix = "shot" } = {}) {
 async function tapText({ text, exact = false, index = 0, verify = true, settleMs = 700 }) {
   await requireUnlocked("tap_text");
   const before = verify ? (await callTweak("get_frontmost_app", {})).text : "";
+  const ocrBefore = verify ? (await ocrVision()).items.map((i) => i.text).join("|") : "";
   const { items } = await ocrVision();
   const hit = findText(items, text, { exact, index });
   if (!hit || !hit.rect) {
@@ -287,11 +369,21 @@ async function tapText({ text, exact = false, index = 0, verify = true, settleMs
   const tapRes = await callTweak("tap_screen", { x, y });
   await new Promise((r) => setTimeout(r, settleMs));
   const after = verify ? (await callTweak("get_frontmost_app", {})).text : "";
+  let screenChanged = null, topText = null;
+  if (verify) {
+    const ocrAfter = (await ocrVision()).items;
+    const sig = ocrAfter.map((i) => i.text).join("|");
+    screenChanged = sig !== ocrBefore;
+    const sorted = ocrAfter.filter((i) => i.rect).sort((a, b) => a.rect.y - b.rect.y);
+    topText = sorted[0]?.text ?? null;
+  }
   return {
     tapped: true, text: hit.text, point: { x, y }, matchedRect: hit.rect,
     source: "vision-ocr", tapResult: tapRes.text.slice(0, 120),
     frontmostChanged: verify ? before !== after : null,
     frontmostAfter: verify ? maybeJSON(after)?.bundleId ?? after.slice(0, 80) : null,
+    screenChanged,
+    topTextAfterTap: topText,
   };
 }
 
