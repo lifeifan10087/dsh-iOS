@@ -9,6 +9,10 @@ PRE=/var/mobile/Library/dsh/shim/ios-preload.cjs
 APP=/var/mobile/Library/dsh/app/node_modules/@deepseek-ai/dsh/lib/bin.js
 LOG=/var/mobile/Library/Logs/dsh-engine.log
 
+# launchd 默认 PATH 不含 /var/jb/usr/bin，导致引擎 spawn osascript/zenity 之类一律 ENOENT
+# （典型症状：「选择文件夹」报 directory picker failed: spawn osascript ENOENT）
+export PATH="/var/jb/usr/bin:/var/jb/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
 # 模型凭证等环境变量放这里（600），有就用
 if [ -f /var/mobile/Library/dsh/env.sh ]; then
   . /var/mobile/Library/dsh/env.sh
@@ -27,7 +31,8 @@ if [ -f "$PIDF" ]; then
     exit 0
   fi
 fi
-if ps -A -o args 2>/dev/null | grep -q "[d]sh/lib/bin.js web"; then
+# ps 在设备上会把命令行截断，所以匹配串只能用靠前的部分（不能用 "dsh/lib/bin.js web"）
+if ps -A -o args 2>/dev/null | grep -q "[u]sr/local/lib/dsh/node"; then
   echo "already running (ps match)"
   exit 0
 fi
