@@ -362,6 +362,44 @@ postinst 顺序：解包 → **apply-patches --quiet** → 起守护 → **smoke
 `{type:"client-request", rpcId, method:"session/openWorkspacePath", payload:{args:{request:{path,action}}}}`，
 手搓调用会因缺会话上下文被 `Path has no verified Host path` 拦，属正常。
 
+## 原生 SwiftUI 客户端（2026-11-28 13:10，第一版可用）
+
+`shell/main.swift` 已从「Safari 壳」换成**原生 SwiftUI 客户端**（388 行），实测可收发：
+发「原生界面测试：回一句「原生 OK」」→ 回复「原生 OK」。
+
+### 引擎 RPC 协议（逆向所得，做原生客户端的核心知识）
+认证不自己做：全部走本地代理 `127.0.0.1:3081`（代理负责跟引擎换 cookie）。
+
+请求形状（POST `/api/<method>`）：
+```json
+{"type":"client-request","rpcId":"任意","method":"session/<name>","payload":{"args":{...}}}
+```
+响应：`{"type":"server-response","rpcId":…,"result":{"ok":true,"value":{…}}}` 或 `{"ok":false,"error":{code,message,details.issues}}`。
+`details.issues` 会直接告诉你缺哪个字段，逆向很快。
+
+| 方法 | args | 返回 |
+|---|---|---|
+| `session/list` | `{"_request":{}}` | `value.items[]`（sessionId / running / title） |
+| `session/page` | `{"request":{"address":{"sessionId":ID,"kind":"session"},"maxMessages":N}}` | `value.records[].event`、`cursor`、`hasMore` |
+| `session/state` | `{"request":{"sessionId":ID}}` | `running`、`queue`、`cursor`、`pendingInput` |
+| `session/prompt` | `{"request":{"sessionId":ID,"requestId":UUID,"mode":"queue","content":[{"type":"text","text":"…"}],"clientTimeZone":"Asia/Shanghai"}}` | 已受理 |
+
+坑：
+- `mode` 只接受 **`queue`**（传 `standard` 会 failed boundary validation）。
+- 地址对象必须带 `kind:"session"`，否则 `session/page` 校验不过。
+- `session/prompt` 的 `request` 必须整套给（少 requestId/mode 都会被边界校验拒）。
+
+事件类型（`records[].event.type`）：`user/message`、`assistant/message`（正文在 `data.message.content[].text`）、
+`tool/call`（`data.name` / `data.arguments`）、`tool/result`、`turn/start|end`、`session/title`、`step/start|end`。
+
+### 部署注意
+SwiftUI + `TextField(axis:)` + `.onChange(of:_:)` 需要 **iOS 17**：`build-ipa.yml` 与 `build-ipa.sh` 的
+`-target arm64-apple-ios17.0`、`Info.plist` 的 `MinimumOSVersion` 都是 17.0（设备是 26，无影响）。
+
+### 第一版覆盖
+会话列表（左上角）、切会话、消息气泡（用户/助手）、工具调用折一行、回合分隔、刷新、Safari 兜底入口、
+发送 + 0.9s 轮询刷新（不做逐字流式）。
+
 ## 关键坐标
 
 | 项 | 值 |
