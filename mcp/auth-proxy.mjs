@@ -94,6 +94,10 @@ server.on("upgrade", async (req, socket, head) => {
   const up = net.connect(UP_PORT, UP_HOST, () => {
     const lines = [`${req.method} ${req.url} HTTP/1.1`];
     const h = upstreamHeaders(req, cookie);
+    // 升级请求必须带上这两个头，否则上游不给 101（WebSocket 静默失败，
+    // 表现就是界面一直「正在加载模型」「载入历史⋯」）
+    h.connection = "Upgrade";
+    h.upgrade = req.headers.upgrade || "websocket";
     for (const [k, v] of Object.entries(h)) {
       if (Array.isArray(v)) for (const one of v) lines.push(`${k}: ${one}`);
       else if (v !== undefined) lines.push(`${k}: ${v}`);
