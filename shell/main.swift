@@ -156,13 +156,33 @@ final class ShellViewController: UIViewController, WKNavigationDelegate, WKUIDel
     }
 }
 
+// iOS 26 起强制 Scene 生命周期：只有 AppDelegate + window 的壳拿不到窗口，
+// 表现为「进程在跑、界面全灰、连 viewDidLoad 都不进」。
+final class SceneDelegate: UIResponder, UIWindowSceneDelegate {
+    var window: UIWindow?
+    func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options: UIScene.ConnectionOptions) {
+        guard let ws = scene as? UIWindowScene else { return }
+        let w = UIWindow(windowScene: ws)
+        w.rootViewController = ShellViewController()
+        w.makeKeyAndVisible()
+        window = w
+    }
+}
+
 final class AppDelegate: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
+
     func application(_ app: UIApplication, didFinishLaunchingWithOptions o: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool {
-        window = UIWindow(frame: UIScreen.main.bounds)
-        window?.rootViewController = ShellViewController()
-        window?.makeKeyAndVisible()
         return true
+    }
+
+    // 用代码指定 scene 配置，避免 Info.plist 里写 $(PRODUCT_MODULE_NAME)（swiftc 不替换）
+    func application(_ application: UIApplication,
+                     configurationForConnecting connectingSceneSession: UISceneSession,
+                     options: UIScene.ConnectionOptions) -> UISceneConfiguration {
+        let cfg = UISceneConfiguration(name: "Default Configuration", sessionRole: connectingSceneSession.role)
+        cfg.delegateClass = SceneDelegate.self
+        return cfg
     }
 }
 
