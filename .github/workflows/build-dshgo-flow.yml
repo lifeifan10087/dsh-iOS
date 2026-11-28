@@ -65,7 +65,28 @@ jobs:
           else:
               print('remote_screen: 跳过（已存在或未匹配）')
 
-          # 2) SSH 表单：预填令牌 + 默认「只连接」，让小屏上不用滚到底部
+          # 2) SSH 表单：把本机主机全部预填好（小屏上键盘挡字段，只能靠预填）
+          f2 = pathlib.Path('lib/ui/remote/ssh_host_form.dart')
+          s2 = f2.read_text()
+          token = 'CLY_BlZtvB2U8d3-zBOVv5GxVFzk0A0aCNxe9MPy17A'
+          reps = [
+              ("final _name = TextEditingController(text: widget.existing?.name ?? '');",
+               "final _name = TextEditingController(text: widget.existing?.name ?? '\\u672c\\u673a');"),
+              ("final _host = TextEditingController(text: widget.existing?.host ?? '');",
+               "final _host = TextEditingController(text: widget.existing?.host ?? '127.0.0.1');"),
+              ("final _user = TextEditingController(text: widget.existing?.user ?? '');",
+               "final _user = TextEditingController(text: widget.existing?.user ?? 'mobile');"),
+              ("final _attachToken = TextEditingController();",
+               f"final _attachToken = TextEditingController(text: '{token}');"),
+              ("late SshDshMode _dshMode = widget.existing?.dshMode ?? SshDshMode.managed;",
+               "late SshDshMode _dshMode = widget.existing?.dshMode ?? SshDshMode.attachOnly;"),
+          ]
+          hit = 0
+          for a, b in reps:
+              if a in s2:
+                  s2 = s2.replace(a, b, 1); hit += 1
+          f2.write_text(s2)
+          print(f'ssh_host_form: 预填 {hit}/{len(reps)} 项')
           f2 = pathlib.Path('lib/ui/remote/ssh_host_form.dart')
           s2 = f2.read_text()
           token = 'CLY_BlZtvB2U8d3-zBOVv5GxVFzk0A0aCNxe9MPy17A'
