@@ -292,6 +292,20 @@ curl -s -o /dev/null -w '%{http_code}\n' -b "$cookie" http://127.0.0.1:3080/redt
 实测（App 内，走 127.0.0.1:3081 代理）：输入「App 内测试：回一句「App 正常」」→ **1 秒**返回「App 正常」，
 状态栏 `1轮1步 · 308… · 25K tok · 缓存命中`。
 
+## 自检与回归（2026-11-28 11:25）
+
+- `deploy/device/smoke-test.sh [--fix]` —— **「真的能对话吗」自检**：检查 /var/jb/bin/sh 链接、
+  boot-start 的 DSH_HOME/PATH、有没有残留 `--patch`，再验 web/purge/proxy 三个端口，
+  最后用 ACP 跑一个最小回合（「只回两个字：好的」）。
+  `--fix`：发现 `--patch` 就自动清掉并重启引擎；deb 的 postinst 会带 `--fix` 调它，
+  结果写到 `/var/mobile/Library/Logs/dsh-smoke.log`。
+  实测：`CHECK web=200 purge=405 purgeInHtml=true proxy=200` + `TURN_OK 0.8s` → **PASS**。
+
+- `deploy/device/phone-functest.mjs` —— 手机操控回归测试，20 项全过：
+  设备状态/OCR/启动 App/回到根页/tap_text(Vision 定位 + 屏变校验)/截图落盘/root 执行/
+  写读列文件/剪贴板读写/syslog/深链校验(同 App 内跳页按屏变判定)/应用列表(bundleId 正确)/
+  运行中应用过滤/前台应用/按键重试/tweak 工具清单。
+
 ## 关键坐标
 
 | 项 | 值 |
