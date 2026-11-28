@@ -15,6 +15,10 @@ export PATH="/var/jb/usr/bin:/var/jb/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
 # 关键：不设 DSH_HOME 时 dsh 按 $HOME/.dsh 解析，rootless 下变成 /var/jb/var/root/.dsh，
 # 于是 profiles/ 与 node_modules 全指向另一个空目录 —— 表现为「插件装了但没生效」。
 export DSH_HOME=/var/mobile/Library/dsh
+# launchd 的作业（sshd / 本引擎）Program 都写的是 /var/jb/bin/sh，而这个文件在
+# 某些清理后不存在 → 作业直接 EX_CONFIG 78，重启后 SSH 与引擎全起不来。
+# 这里兜底建好链接（幂等，不需要 root：目标可读即可）。
+[ -e /var/jb/bin/sh ] || ln -sfn /var/jb/usr/bin/dash /var/jb/bin/sh 2>/dev/null
 
 # 模型凭证等环境变量放这里（600），有就用
 if [ -f /var/mobile/Library/dsh/env.sh ]; then
