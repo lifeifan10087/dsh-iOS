@@ -306,6 +306,31 @@ curl -s -o /dev/null -w '%{http_code}\n' -b "$cookie" http://127.0.0.1:3080/redt
   写读列文件/剪贴板读写/syslog/深链校验(同 App 内跳页按屏变判定)/应用列表(bundleId 正确)/
   运行中应用过滤/前台应用/按键重试/tweak 工具清单。
 
+## 三件收尾（2026-11-28 11:50）
+
+### 1) 补丁固化进 deb postinst（升级不再丢）
+`deploy/device/apply-patches.sh`（118 行，幂等）覆盖所有本机魔改：
+`/var/jb/bin/sh` 链接 · dsh JS 里 `/bin/sh|bash` → 越狱路径 · dsh-purge 的 `{{cwd}}` ·
+osascript 替身（Mach-O，装完 ldid，用 cksum 指纹做幂等）· root MCP 与 auth-proxy ·
+profile 补丁层（`deploy/device/profile-patch.yml` 作为标准版，覆盖前留 `.pre-deb` 备份）·
+boot-start 的 `DSH_HOME`/`PATH`。
+postinst 顺序：解包 → **apply-patches --quiet** → 起守护 → **smoke-test --fix**。
+实测：首跑 1 处改动、二跑 0 处；故意把 profile 补丁层清空后重跑 → 条目从 0 恢复到 10，并留备份。
+
+### 2) node-pty 判定：**不可用，砍掉终端**
+三次实测：`spawn` 成功、`pid` 有值，但**数据通道无输出**（`sh -c 'echo PTY_OK'` 空、写入 `echo` 后仍空）。
+结论：iOS 上不要指望交互式终端，`run_command`（root 子进程 + 非交互）已覆盖实际需求。
+
+### 3) dsh-go 原生 UI
+- `~/.dsh/dsh-go/ui.json`：顶栏 `model/agents/newChat/detail` + 自定义「iOS」按钮；
+  输入框上方 4 个胶囊（自检 / 操控测试 / 补丁对账 / 引擎日志）；新对话 3 张建议卡；
+  `density: compact`、`accentPreset: daiqing`、`ctrl+k` 搜索。检查器 `applied 7 · issues []`，
+  App 侧 `ui.status.json` 已读到（`usingPrevious: false`）。
+- 原生插件 `~/.dsh/dsh-go/plugins/local-iphone-status`：输入框上方一条「iPhone 状态」，
+  探活 `http://<iphone>:8090/mcp`（20s 缓存，30s 刷新）；点开是详情面板
+  （连接/锁屏/前台应用/最后检查/探针地址 + 三个一键动作）。`check.mjs --load` 通过（中英文视图均可画），
+  已 `dsh plugin --profile web add` 装入 web profile（软链 + dependencies）。
+
 ## 关键坐标
 
 | 项 | 值 |
