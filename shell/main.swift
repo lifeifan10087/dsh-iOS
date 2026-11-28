@@ -35,6 +35,8 @@ final class ShellViewController: UIViewController, WKNavigationDelegate, WKUIDel
         let cfg = WKWebViewConfiguration()
         cfg.allowsInlineMediaPlayback = true
         cfg.preferences.setValue(true, forKey: "developerExtrasEnabled")
+        // WKWebView 默认 UA 里没有 "Safari"，前端可能据此判定环境；伪装成 Safari 再试
+        cfg.applicationNameForUserAgent = "Version/18.0 Mobile/15E148 Safari/604.1"
         // 把页面里的 console / 未捕获错误回传出来，WKWebView 里没有 Safari 的 Web Inspector
         cfg.userContentController.add(self, name: "dshlog")
         let hook = """
