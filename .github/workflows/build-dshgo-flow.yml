@@ -1,0 +1,55 @@
+name: build-dshgo-flow
+
+on:
+  workflow_dispatch:
+    inputs:
+      flutter_version:
+        description: Flutter version (empty = latest stable)
+        required: false
+        default: ''
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - name: Checkout upstream dsh-go
+        uses: actions/checkout@v4
+        with:
+          repository: ccch1mneyyy/dsh-Go
+          path: src
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ inputs.flutter_version }}
+          cache: true
+
+      - name: Versions
+        run: |
+          flutter --version
+          xcodebuild -version
+
+      - name: Pub get
+        working-directory: src/app
+        run: flutter pub get
+
+      - name: Build iOS (no codesign)
+        working-directory: src/app
+        run: flutter build ios --release --no-codesign
+
+      - name: Package IPA
+        working-directory: src/app/build/ios/iphoneos
+        run: |
+          ls -la
+          rm -rf Payload && mkdir Payload
+          cp -R Runner.app Payload/
+          zip -qry DshGoFlow.ipa Payload
+          du -h DshGoFlow.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dshgo-flow-ipa
+          path: src/app/build/ios/iphoneos/DshGoFlow.ipa
+          if-no-files-found: error
