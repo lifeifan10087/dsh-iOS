@@ -21,11 +21,16 @@ mkdir -p "$STAGE/$APP" "$STAGE/$JB/usr/local/bin" "$STAGE/$JB/Library/LaunchDaem
 chmod 755 "$STAGE/$JB" "$STAGE/$JB/usr" "$STAGE/$JB/usr/local" "$STAGE/$JB/usr/local/lib" "$STAGE/$JB/usr/local/bin" "$STAGE/$JB/Library" "$STAGE/$JB/Library/LaunchDaemons"
 cp "$NODE_BIN" "$STAGE/$APP/node"; chmod 755 "$STAGE/$APP/node"
 cp "$MODS" "$STAGE/$APP/node_modules.tgz"; chmod 644 "$STAGE/$APP/node_modules.tgz"
-# 自检与回归脚本（装完可让用户直接跑）
+# 补丁资源 + 脚本：apply-patches.sh 从这里取（升级后重跑即可补齐所有本机魔改）
 mkdir -p "$STAGE/$APP/bin"
-for f in smoke-test.sh phone-functest.mjs auth-proxy.mjs; do
-  [ -f "$KIT/deploy/device/$f" ] && cp "$KIT/deploy/device/$f" "$STAGE/$APP/bin/$f" && chmod 755 "$STAGE/$APP/bin/$f"
-done
+cp -f "$KIT/deploy/device/smoke-test.sh"       "$STAGE/$APP/bin/smoke-test.sh"
+cp -f "$KIT/deploy/device/phone-functest.mjs"  "$STAGE/$APP/bin/phone-functest.mjs"
+cp -f "$KIT/deploy/device/apply-patches.sh"    "$STAGE/$APP/apply-patches.sh"
+cp -f "$KIT/deploy/device/profile-patch.yml"   "$STAGE/$APP/profile-patch.yml"
+cp -f "$KIT/mcp/auth-proxy.mjs"                "$STAGE/$APP/bin/auth-proxy.mjs"
+cp -f "$KIT/mcp/mcp-ios-server.mjs"            "$STAGE/$APP/bin/mcp-ios-server.mjs"
+[ -f "$KIT/deploy/device/osascript-ios-arm64" ] && cp -f "$KIT/deploy/device/osascript-ios-arm64" "$STAGE/$APP/osascript-ios-arm64"
+chmod 755 "$STAGE/$APP/bin/"* "$STAGE/$APP/apply-patches.sh" 2>/dev/null || true
 
 mkdir -p "$STAGE/$APP/shim"
 for f in wasm-fake.cjs fetch-http.cjs ios-preload.cjs; do cp "$KIT/shim/$f" "$STAGE/$APP/shim/$f"; chmod 644 "$STAGE/$APP/shim/$f"; done
@@ -99,6 +104,11 @@ URL="$(grep -oE 'http://127\.0\.0\.1:3080/\?token=[A-Za-z0-9_-]+' /var/mobile/Li
 # 再放一份到「文件」App 能看到的目录，方便用 Filza 打开
 mkdir -p /var/mobile/Documents 2>/dev/null || true
 [ -n "$URL" ] && printf '%s\n' "$URL" > /var/mobile/Documents/dsh-url.txt 2>/dev/null || true
+
+# —— 幂等补丁：sh 路径 / osascript / root MCP / 代理 / profile 补丁层 / DSH_HOME ——
+if [ -f "$APP/apply-patches.sh" ]; then
+  sh "$APP/apply-patches.sh" --quiet || true
+fi
 
 # —— 冒烟自检：真的能对话吗？失败时自动去掉会破坏 profile 组合的 --patch 并重启 ——
 SMOKE="$APP/bin/smoke-test.sh"
