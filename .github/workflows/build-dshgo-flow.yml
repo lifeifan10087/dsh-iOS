@@ -116,6 +116,24 @@ jobs:
           else:
               print('WARN: ssh_host_form 模式未命中')
 
+          # 3) 去掉 DSH Remote 区块里那个带巨大点击外距的授权页脚（会吞掉下方 SSH 主机行的点击）
+          f3 = pathlib.Path('lib/ui/remote/remote_screen.dart')
+          s3 = f3.read_text()
+          old3 = ("        footer: available\n"
+                  "            ? RelayCredit(server: server.isEmpty || server == 'dsh.r2049.cn' ? null : server)\n"
+                  "            : Text(l10n.remoteUnavailable),")
+          new3 = ("        footer: available\n"
+                  "            ? const SizedBox.shrink()\n"
+                  "            : Text(l10n.remoteUnavailable),")
+          if old3 in s3:
+              s3 = s3.replace(old3, new3, 1)
+              s3 = s3.replace("        margin: available ? RelayCredit.sectionMargin : kSettingsGroupMargin,",
+                              "        margin: kSettingsGroupMargin,", 1)
+              f3.write_text(s3)
+              print('remote_screen: 已移除 RelayCredit 页脚')
+          else:
+              print('WARN: RelayCredit 页脚未匹配')
+
           # 3) 版本号自增，保证 TrollStore 一定视为升级
           pub = pathlib.Path('pubspec.yaml')
           t = pub.read_text()
