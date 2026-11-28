@@ -24,6 +24,14 @@ cp "$MODS" "$STAGE/$APP/node_modules.tgz"; chmod 644 "$STAGE/$APP/node_modules.t
 mkdir -p "$STAGE/$APP/shim"
 for f in wasm-fake.cjs fetch-http.cjs ios-preload.cjs; do cp "$KIT/shim/$f" "$STAGE/$APP/shim/$f"; chmod 644 "$STAGE/$APP/shim/$f"; done
 
+# osascript shim：iOS 没有 AppleScript，dsh 的「选择文件夹」会 spawn osascript 失败
+# （脚本形式不行，node 对脚本 exec 返回 EPERM，必须是 Mach-O）
+mkdir -p "$STAGE/$JB/usr/bin"
+if [ -f "$KIT/deploy/device/osascript-ios-arm64" ]; then
+  cp "$KIT/deploy/device/osascript-ios-arm64" "$STAGE/$JB/usr/bin/osascript"
+  chmod 755 "$STAGE/$JB/usr/bin/osascript"
+fi
+
 # 启动器（--jitless：越狱机没给 JIT 授权时 node 会 SIGBUS，见 HANDOFF 坑表）
 cat > "$STAGE/$JB/usr/local/bin/dsh-ios" <<'EOF'
 #!/bin/sh
