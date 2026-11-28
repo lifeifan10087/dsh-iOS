@@ -23,56 +23,110 @@ final class ShellViewController: UIViewController, WKNavigationDelegate, WKUIDel
         loadEntry()
     }
 
+    // 地址来源，按优先级：
+    //   1) 自己沙盒里的 Documents/dsh-url.txt（引擎/脚本会写，最可靠）
+    //   2) 系统中转文件（万一 App 拿到 no-sandbox 权限）
+    //   3) UserDefaults 里上次用的
+    //   4) 都没有 → 就地显示输入框（不再用 alert，viewDidLoad 里弹框会静默失败）
+    private var urlCandidates: [String] {
+        var list: [String] = []
+        if let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
+            list.append(docs.appendingPathComponent("dsh-url.txt").path)
+        }
+        list.append("/var/mobile/Library/dsh/.web-url")
+        list.append("/var/mobile/Documents/dsh-url.txt")
+        return list
+    }
+
     private func loadEntry() {
-        // 1) 引擎写的带 token 地址（两个位置都试）
-        let candidates = [
-            "/var/mobile/Library/dsh/.web-url",
-            "/var/mobile/Documents/dsh-url.txt",
-        ]
-        for path in candidates {
-            if let s = try? String(contentsOfFile: path, encoding: .utf8) {
-                let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
-                if let u = URL(string: trimmed), u.scheme != nil {
-                    defaults.set(u.absoluteString, forKey: urlKey)
-                    web.load(URLRequest(url: u)); return
-                }
-            }
+        for path in urlCandidates {
+            guard let s = try? String(contentsOfFile: path, encoding: .utf8) else { continue }
+            let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let u = URL(string: trimmed), u.scheme != nil else { continue }
+            defaults.set(u.absoluteString, forKey: urlKey)
+            hideEntryForm()
+            web.load(URLRequest(url: u))
+            return
         }
-        // 2) 已保存地址；3) 都没有就弹框让用户粘
-        if let s = defaults.string(forKey: urlKey), let u = URL(string: s) {
-            web.load(URLRequest(url: u)); return
+        if let s = defaults.string(forKey: urlKey), let u = URL(string: s), u.scheme != nil {
+            hideEntryForm()
+            web.load(URLRequest(url: u))
+            return
         }
-        askForURL()
+        showEntryForm("没有找到引擎地址。先在手机上跑：\nsh /var/mobile/Library/dsh/start-engine.sh\n然后把带 token 的地址粘进来：")
+    }
+
+    // —— 内联输入框（替代 alert）——
+    private var form: UIView?
+    private var field: UITextField?
+
+    private func showEntryForm(_ hint: String) {
+        hideEntryForm()
+        let box = UIView(frame: view.bounds)
+        box.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        box.backgroundColor = .systemBackground
+
+        let label = UILabel()
+        label.numberOfLines = 0
+        label.font = .systemFont(ofSize: 15)
+        label.text = hint
+        label.translatesAutoresizingMaskIntoConstraints = false
+
+        let tf = UITextField()
+        tf.borderStyle = .roundedRect
+        tf.placeholder = "http://127.0.0.1:3080/?token=…"
+        tf.autocapitalizationType = .none
+        tf.autocorrectionType = .no
+        tf.translatesAutoresizingMaskIntoConstraints = false
+        field = tf
+
+        let btn = UIButton(type: .system)
+        btn.setTitle("打开", for: .normal)
+        btn.titleLabel?.font = .boldSystemFont(ofSize: 17)
+        btn.addTarget(self, action: #selector(submitForm), for: .touchUpInside)
+        btn.translatesAutoresizingMaskIntoConstraints = false
+
+        box.addSubview(label); box.addSubview(tf); box.addSubview(btn)
+        view.addSubview(box)
+        form = box
+
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 24),
+            label.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -24),
+            label.topAnchor.constraint(equalTo: box.topAnchor, constant: 120),
+            tf.leadingAnchor.constraint(equalTo: label.leadingAnchor),
+            tf.trailingAnchor.constraint(equalTo: label.trailingAnchor),
+            tf.topAnchor.constraint(equalTo: label.bottomAnchor, constant: 16),
+            btn.centerXAnchor.constraint(equalTo: box.centerXAnchor),
+            btn.topAnchor.constraint(equalTo: tf.bottomAnchor, constant: 20),
+        ])
+    }
+
+    private func hideEntryForm() {
+        form?.removeFromSuperview()
+        form = nil
+        field = nil
+    }
+
+    @objc private func submitForm() {
+        guard let text = field?.text?.trimmingCharacters(in: .whitespacesAndNewlines),
+              let u = URL(string: text), u.scheme != nil else { return }
+        defaults.set(u.absoluteString, forKey: urlKey)
+        hideEntryForm()
+        web.load(URLRequest(url: u))
+    }
+
+    private func askForURL() {
+        showEntryForm("把带 token 的地址粘进来：")
     }
 
     // 加载失败要说清楚原因，别只留一片灰
     func webView(_ w: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        showLoadError(error)
+        showEntryForm("打不开引擎界面：\(error.localizedDescription)\n先确认引擎在跑，再粘地址：")
     }
 
     func webView(_ w: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        showLoadError(error)
-    }
-
-    private func showLoadError(_ error: Error) {
-        let ac = UIAlertController(
-            title: "打不开引擎界面",
-            message: "先确认引擎在跑：sh /var/mobile/Library/dsh/start-engine.sh\n\n\(error.localizedDescription)",
-            preferredStyle: .alert)
-        ac.addAction(UIAlertAction(title: "重试", style: .default) { _ in self.loadEntry() })
-        ac.addAction(UIAlertAction(title: "粘贴地址", style: .default) { _ in self.askForURL() })
-        present(ac, animated: true)
-    }
-
-    private func askForURL() {
-        let ac = UIAlertController(title: "dsh 引擎地址", message: "粘贴日志里的 http://127.0.0.1:3080/?token=...", preferredStyle: .alert)
-        ac.addTextField { $0.placeholder = "http://127.0.0.1:3080/?token=…"; $0.text = "http://127.0.0.1:3080/" }
-        ac.addAction(UIAlertAction(title: "连接", style: .default) { _ in
-            guard let t = ac.textFields?.first?.text, let u = URL(string: t) else { return }
-            self.defaults.set(t, forKey: self.urlKey)
-            self.web.load(URLRequest(url: u))
-        })
-        present(ac, animated: true)
+        showEntryForm("加载失败：\(error.localizedDescription)")
     }
 
     // 外部 http 链接交给系统
