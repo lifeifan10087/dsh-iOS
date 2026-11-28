@@ -115,7 +115,13 @@ final class ShellViewController: UIViewController, WKNavigationDelegate, WKUIDel
                 }
             }
             if cookies.isEmpty { finish(); return }
-            WKWebsiteDataStore.default().httpCookieStore.setCookies(cookies) { finish() }
+            let store = WKWebsiteDataStore.default().httpCookieStore
+            let group = DispatchGroup()
+            for c in cookies {
+                group.enter()
+                store.setCookie(c) { group.leave() }
+            }
+            group.notify(queue: .main) { finish() }
         }.resume()
     }
 
