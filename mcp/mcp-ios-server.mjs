@@ -569,15 +569,30 @@ const TOOLS = [
   },
   {
     name: "clipboard_get",
-    description: "读剪贴板（走 tweak 私有 API，不依赖 pbpaste）",
-    inputSchema: { type: "object", properties: {}, additionalProperties: false },
-    run: async () => ({ text: (await callTweak("get_clipboard", {})).text }),
+    description: "读剪贴板正文（tweak 返回的是嵌套 JSON，这里拆平；raw=true 给原始结构）",
+    inputSchema: { type: "object", properties: { raw: { type: "boolean" } }, additionalProperties: false },
+    run: async (a) => {
+      const r = await callTweak("get_clipboard", {});
+      const inner = maybeJSON(r.text);
+      if (inner && typeof inner === "object" && typeof inner.text === "string") {
+        return a.raw ? inner : { text: inner.text, hasImage: !!inner.hasImage, hasURL: !!inner.hasURL };
+      }
+      return { text: String(r.text ?? "") };
+    },
   },
   {
     name: "clipboard_set",
-    description: "写剪贴板（走 tweak 私有 API）",
+    description: "写剪贴板并回读校验（走 tweak 私有 API）",
     inputSchema: { type: "object", properties: { text: { type: "string" } }, required: ["text"], additionalProperties: false },
-    run: async (a) => ({ result: (await callTweak("set_clipboard", { text: a.text })).text }),
+    run: async (a) => {
+      const w = await callTweak("set_clipboard", { text: a.text });
+      let readBack = null;
+      try {
+        const back = maybeJSON((await callTweak("get_clipboard", {})).text);
+        readBack = typeof back?.text === "string" ? back.text : null;
+      } catch {}
+      return { result: w.text, verified: readBack === a.text, readBack };
+    },
   },
   {
     name: "tail_syslog",
