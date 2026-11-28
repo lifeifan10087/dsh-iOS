@@ -400,6 +400,24 @@ SwiftUI + `TextField(axis:)` + `.onChange(of:_:)` 需要 **iOS 17**：`build-ipa
 会话列表（左上角）、切会话、消息气泡（用户/助手）、工具调用折一行、回合分隔、刷新、Safari 兜底入口、
 发送 + 0.9s 轮询刷新（不做逐字流式）。
 
+## 原生客户端 v3（2026-11-28 13:28，仿 dsh-go）
+
+`shell/main.swift` 约 680 行 SwiftUI，功能对照 dsh-go：
+
+| 能力 | 实现 |
+|---|---|
+| 抽屉会话列表 | 按 updatedAt 分「今天/昨天/更早」，标题懒加载（session/page 里的 session/title）并持久化到 UserDefaults |
+| 新建对话 | `session/create` `{request:{}}` → 返回新 sessionId |
+| 顶栏 | 标题 + 「标准模式」胶囊（菜单：刷新/网页版/拷 ID） |
+| 快捷胶囊 | 4 个（自检/操控测试/补丁对账/引擎日志），点击只填输入框 |
+| 空状态 | 「探索未至之境」+ 3 张建议卡 |
+| 消息 | 用户(强调色)/助手/工具卡片(可展开、出错变红)/回合分隔；长按拷贝 |
+| 状态条 | 引擎延迟 + **前台 App（tweak 8090 get_frontmost_app）** + 就绪/生成中 + 会话数 |
+| 主题 | 6 种强调色 + 紧凑密度（UserDefaults） |
+| 噪音裁剪 | runtime context 段落（Current runtime context / Current DeepSeek Harness… / Browser time zone…）统一剥离 |
+
+未做：逐字流式（400ms 轮询）、模型切换（`llm/listProviders` 参数还没逆出来）、插件化胶囊。
+
 ## 关键坐标
 
 | 项 | 值 |
