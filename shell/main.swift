@@ -22,6 +22,9 @@ func dshlog(_ msg: String) {
 final class ShellViewController: UIViewController, UITextFieldDelegate {
     private let defaults = UserDefaults.standard
     private let urlKey = "dsh.web.url"
+    /// 本地反向代理（auth-proxy.mjs）的固定地址：它自己去引擎换 cookie，
+    /// 所以这个地址永远有效 —— 引擎重启、token 变化都不用重新配对。
+    private let proxyURL = "http://127.0.0.1:3081/"
     private var currentToken = ""
     private var safariVC: SFSafariViewController?
     private var field: UITextField?
@@ -47,6 +50,7 @@ final class ShellViewController: UIViewController, UITextFieldDelegate {
         super.viewDidAppear(animated)
         if !opened {
             opened = true
+            if probeProxy() { open(URL(string: proxyURL)!); return }
             if let u = resolveURL() { open(u); return } else {
                 showForm("没找到引擎地址。先在手机上跑：\nsh /var/mobile/Library/dsh/start-engine.sh\n然后把带 token 的地址粘进来：")
                 return
@@ -66,6 +70,22 @@ final class ShellViewController: UIViewController, UITextFieldDelegate {
             guard let self, let u = URL(string: fresh) else { return }
             self.open(u)
         }
+    }
+
+    /// 探一下本地代理是否在跑（2 秒超时）。在跑就用固定地址。
+    private func probeProxy() -> Bool {
+        guard let u = URL(string: proxyURL) else { return false }
+        var req = URLRequest(url: u)
+        req.timeoutInterval = 2
+        let sem = DispatchSemaphore(value: 0)
+        var ok = false
+        URLSession.shared.dataTask(with: req) { _, resp, _ in
+            if let http = resp as? HTTPURLResponse, http.statusCode < 500 { ok = true }
+            sem.signal()
+        }.resume()
+        _ = sem.wait(timeout: .now() + 2.5)
+        dshlog("probeProxy ok=\(ok)")
+        return ok
     }
 
     private func tokenURL() -> String? {
