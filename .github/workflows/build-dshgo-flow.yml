@@ -41,6 +41,45 @@ jobs:
         working-directory: src/app
         run: flutter pub get
 
+      - name: Patch source (manual add-host entry + version bump)
+        working-directory: src/app
+        run: |
+          python3 - <<'PYEOF'
+          import re, pathlib
+
+          # 1) 顶栏加一个「添加主机」按钮：绕开小屏上够不到的底部入口
+          f = pathlib.Path('lib/ui/remote/remote_screen.dart')
+          s = f.read_text()
+          needle = "        const AskAiButton(AskAiTopic.remote),"
+          inject = (
+              "        GlassIconButton(\n"
+              "          icon: AppIcons.add,\n"
+              "          tooltip: '\\u6dfb\\u52a0 SSH \\u4e3b\\u673a',\n"
+              "          onPressed: () => push(SshHostFormPage()),\n"
+              "        ),\n"
+          )
+          if needle in s and "SshHostFormPage())" not in s.split("actions: [")[1][:800]:
+              s = s.replace(needle, inject + needle, 1)
+              f.write_text(s)
+              print('remote_screen: 顶栏按钮已注入')
+          else:
+              print('remote_screen: 跳过（已存在或未匹配）')
+
+          # 2) 版本号自增，保证 TrollStore 一定视为升级
+          pub = pathlib.Path('pubspec.yaml')
+          t = pub.read_text()
+          m = re.search(r'^version:\s*(\d+)\.(\d+)\.(\d+)\+(\d+)\s*$', t, re.M)
+          if m:
+              ma, mi, pa, b = map(int, m.groups())
+              new = f'version: {ma}.{mi}.{pa + 1}+{b + 1}'
+              t = t[:m.start()] + new + t[m.end():]
+              pub.write_text(t)
+              print('版本号 ->', new)
+          else:
+              print('WARN: 未找到版本行')
+          PYEOF
+          grep -n "version:" pubspec.yaml | head -2
+
       - name: Patch iOS layout (bottom padding for home indicator)
         working-directory: src/app
         run: |
