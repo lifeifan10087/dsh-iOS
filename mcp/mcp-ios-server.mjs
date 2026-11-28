@@ -16,7 +16,7 @@
 // 依赖：tweak 的 127.0.0.1:8090/mcp（HTTP）；不依赖任何 npm 包。
 
 import { execFile, execFileSync, spawn } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync, statSync, openSync, readSync, closeSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync, statSync, openSync, readSync, closeSync, copyFileSync as cpSync, chownSync, chmodSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
 
@@ -441,6 +441,37 @@ async function openURLVerified(url, { waitMs = 2500, verifyScreen = true } = {})
   };
 }
 
+
+// —— 分享目录：宿主 App（com.dsh.go.shell）的数据容器 Documents ——
+// 该容器在「文件」App → 我的 iPhone → DSH Go 里可见（Info.plist 已开 UIFileSharingEnabled）
+function shareDirs() {
+  const base = "/var/mobile/Containers/Data/Application";
+  const found = [];
+  let names = [];
+  try { names = readdirSync(base); } catch { return []; }
+  for (const name of names) {
+    const dir = `${base}/${name}`;
+    const meta = `${dir}/.com.apple.mobile_container_manager.metadata.plist`;
+    try {
+      if (!existsSync(meta)) continue;
+      if (!readFileSync(meta).toString("latin1").includes("com.dsh.go.shell")) continue;
+      // 重装/重签会留下旧容器；取「最近有活动」的那个才是当前 App 在用的
+      let mtime = 0;
+      try { mtime = statSync(`${dir}/Library`).mtimeMs; } catch { try { mtime = statSync(dir).mtimeMs; } catch {} }
+      found.push({ documents: `${dir}/Documents`, mtime });
+    } catch {}
+  }
+  found.sort((a, b) => b.mtime - a.mtime);
+  return found.map((x) => x.documents);
+}
+
+function shareDirFor(name) {
+  const dirs = shareDirs();
+  const dir = dirs[0] || "/var/mobile/Documents/dsh-share";
+  mkdirSync(dir, { recursive: true });
+  return `${dir}/${String(name).replace(/\//g, "_")}`;
+}
+
 // —— 工具定义 ——
 const TOOLS = [
   {
@@ -631,6 +662,45 @@ const TOOLS = [
       if (!bin) throw new Error("sbbanner/sbalert 不存在（apt-get install sbutils）");
       await sh(bin, [a.title ? `${a.title}\n${a.text}` : a.text]);
       return { sent: true };
+    },
+  },
+  {
+    name: "publish_file",
+    description: "把模型生成的文件发布到宿主 App 的 Documents（「文件」App 里可见，可直接长按分享）",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "源文件绝对路径" },
+        name: { type: "string", description: "目标文件名（可选）" },
+        overwrite: { type: "boolean" },
+      },
+      required: ["path"], additionalProperties: false,
+    },
+    run: async (a) => {
+      const src = ensureAbs(a.path);
+      const st = statSync(src);
+      if (st.isDirectory()) throw new Error("publish_file 只接受文件，目录请先打包");
+      const dest = shareDirFor(a.name || src.split("/").pop());
+      if (!a.overwrite && existsSync(dest)) {
+        return { path: dest, existed: true, note: "同名文件已存在（overwrite:true 可覆盖）" };
+      }
+      cpSync(src, dest);
+      chownSync(dest, 501, 501);
+      chmodSync(dest, 0o644);
+      const d = statSync(dest);
+      return { path: dest, size: d.size, inFilesApp: "文件 App → 我的 iPhone → DSH Go", existed: false };
+    },
+  },
+  {
+    name: "share_dir",
+    description: "看当前分享目录（宿主 App Documents）里有什么",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    run: async () => {
+      const dirs = shareDirs();
+      return {
+        dirs,
+        note: dirs.length ? "文件 App → 我的 iPhone → DSH Go" : "未找到 App 数据容器（先用 publish_file 会自动建）",
+      };
     },
   },
   {
