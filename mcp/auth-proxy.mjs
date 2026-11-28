@@ -53,6 +53,13 @@ function upstreamHeaders(req, extraCookie) {
   delete h.host;
   delete h.connection;
   h.host = `${UP_HOST}:${UP_PORT}`;
+  // 引擎对写操作做同源校验（看 Origin/Referer 的 host 是否等于 Host）。
+  // 客户端看到的是 3081，透传过去就会被判成跨源 → 401。这里统一改写成上游地址。
+  const origin = `http://${UP_HOST}:${UP_PORT}`;
+  if (h.origin) h.origin = origin;
+  if (h.referer) h.referer = String(h.referer).replace(`http://127.0.0.1:${LISTEN_PORT}`, origin);
+  if (h["x-forwarded-host"]) delete h["x-forwarded-host"];
+  if (h["x-forwarded-proto"]) delete h["x-forwarded-proto"];
   if (extraCookie) {
     // 保留客户端自己的 cookie，再叠加会话 cookie
     const client = h.cookie ? `${h.cookie}; ` : "";
